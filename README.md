@@ -21,6 +21,7 @@ You are tidying up old notes and find a seed phrase, a WIF key or an xpub. Does 
 - **Zcash and Firo (transparent addresses)**: Zcash `t1...` (BIP44 coin 133) and Firo `a...` (BIP44 coin 136) from the same seed, WIF and hex keys, and checked against Blockchair (Zcash) and the Firo Insight explorer. Shielded addresses are not checked (see Limitations).
 - **Adaptive scanning**: checks the first few addresses and only goes deeper where it finds activity, the same way real wallets discover addresses. Change addresses and extra accounts are only checked when used.
 - **Honest results**: rejected inputs and failed lookups are flagged loudly, never shown as "empty". Typos in seed phrases are diagnosed by word *position*, without printing your words.
+- **Optional sweep**: `walletcheck sweep` moves found BTC and EVM funds (native coins and tokens) to a new wallet you choose. Signing happens locally; only signed transactions are sent. See [Sweeping funds](#sweeping-funds-optional).
 - **Verified**: published test vectors (BIP, Electrum) and cross-validation against independent libraries run automatically on every change.
 
 ## Install
@@ -146,6 +147,43 @@ An unused seed costs about 55 lookups instead of several hundred. A used wallet 
 | `--proxy` | none | Route lookups through a proxy, e.g. Tor: `socks5h://127.0.0.1:9050` |
 | `-v` / `-q` | | Verbose / quiet output |
 
+## Sweeping funds (optional)
+
+`walletcheck sweep` moves what `scan` found into a **new wallet you control**. It is the only command that moves funds, so it is opt-in and needs two extra libraries:
+
+```bash
+pip install "walletcheck[sweep] @ git+https://github.com/r3n3x/walletcheck.git"
+walletcheck sweep                  # hidden prompt for your secrets, like scan
+walletcheck sweep --dry-run        # build and sign, show everything, never broadcast
+```
+
+What happens:
+
+1. The same adaptive scan finds funded addresses.
+2. Private keys are re-derived **in memory** for those addresses only. Each key must reproduce its exact address, checked with a second independent library, or the sweep refuses to sign.
+3. For each chain with funds, you are asked whether to sweep it, the destination address and the broadcast endpoint (Enter = public default, or your own node).
+4. The signed plan is shown: inputs, amount, fee and destination. **One `y` broadcasts it.** If the fee is unusual (over 10% of the amount, or over 100 sat/vB), you must type `yes` instead.
+
+| | Bitcoin | EVM chains |
+|---|---|---|
+| What is moved | All confirmed outputs, all address types (legacy incl. uncompressed, nested and native segwit, taproot), one transaction | Configured tokens first, then the native coin minus all fees |
+| Fee target | mempool.space "hour fee" rate (~1 hour), replace-by-fee enabled | EIP-1559: max fee = 2 x base fee + tip, the tip is taken from what recent blocks actually paid (normally minutes) |
+| Safety checks | Every input is verified against its full previous transaction (hash, script, amount), so an endpoint cannot misreport amounts; duplicate outputs are ignored | The endpoint's chain id must match; a failed call aborts instead of counting as zero; the tip is capped at 3x what recent blocks paid and cross-checked against a second, independent endpoint; the endpoint never receives a signed transaction before you confirm |
+| Skipped and reported | Unconfirmed outputs; outputs worth less than their own fee; results below the dust limit; anything beyond one standard-size transaction (sweep again afterwards) | Tokens when there is no native coin for gas (shows how much is needed); tokens that cannot be transferred (frozen or paused); addresses with pending transactions |
+
+Destination addresses are checked (checksum, mainnet, not one of the swept addresses). An EVM destination that is a smart contract (e.g. a Safe) on some chain but not on the chain being swept is refused, because funds sent there could be lost. If that can't be checked on every chain, you must type `yes` to continue. A small amount of native coin may remain on EVM addresses as unused fee headroom.
+
+Good to know:
+
+- **Privacy:** all Bitcoin inputs go into one transaction, which links the swept wallets on-chain. To keep wallets separate, sweep one secret per run.
+- **Thoroughness:** sweep uses the same adaptive scan as `scan`. Use `--gap 20` to sweep everything a wallet could have used.
+- **Dry run:** `--dry-run` prints fully signed transactions. Anyone who gets them can broadcast them, so don't paste them anywhere unless you intend to send them.
+- **Lookups that fail** are listed by address; sweep again later to cover them.
+
+**Not swept:** Zcash and Firo (reported; use their own wallets), Monero, watch-only inputs (xpub, public keys, addresses), multisig.
+
+> ⚠️ **Transactions cannot be reversed.** Double-check the destination, and do a first sweep with a small amount. Mature wallets also offer sweeping: for large amounts, consider Electrum or Sparrow (Bitcoin) or importing the key into Rabby/MetaMask (EVM).
+
 **Fixed-count mode:** `walletcheck derive` writes a fixed list of addresses to `addresses.csv` without any network access. `walletcheck check` then looks that list up. This is useful if you want to inspect or edit the address list first.
 
 ## Security model
@@ -153,13 +191,14 @@ An unused seed costs about 55 lookups instead of several hundred. A used wallet 
 **What it guarantees**
 
 - Secrets are only used in memory to derive public addresses.
-- Secrets are never printed, written to disk or sent anywhere (enforced by `tests/test_privacy.py`).
+- Secrets are never printed, written to disk or sent anywhere (enforced by `tests/test_privacy.py` and `tests/test_sweep_cli.py`).
+- `scan`, `derive` and `check` only read public data. Only `sweep` moves funds, and only after you confirm a signed plan; it broadcasts signed transactions, never keys.
 - Only public addresses are sent to [mempool.space](https://mempool.space) / [blockstream.info](https://blockstream.info) and public EVM RPC endpoints (publicnode, dRPC and official chain RPCs).
 
 **What it cannot protect against**
 
 - **Privacy:** explorers see your IP and all addresses you query, so they can link them to each other. Use `--proxy` with Tor or a VPN if that matters.
-- **Your computer:** malware or a compromised Python environment can read anything you paste. Read the code; it is a single file.
+- **Your computer:** malware or a compromised Python environment can read anything you paste. Read the code: `walletcheck.py` (scanning) and `walletcheck_sweep.py` (sweeping).
 - **Past exposure:** keys that sat in plain-text notes should be treated as exposed. **If you find funds, move them to a fresh wallet.**
 
 ## Limitations
@@ -186,7 +225,8 @@ The test suite covers:
 - published test vectors;
 - cross-validation of every input format against independent libraries ([embit](https://github.com/diybitcoinhardware/embit) for Bitcoin, [eth-account](https://github.com/ethereum/eth-account) for Ethereum);
 - the gap-limit logic;
-- secret-leak tests.
+- secret-leak tests;
+- sweep: every Bitcoin signature re-checked with a second library ([bitcoin-utils](https://github.com/karask/python-bitcoin-utils) sighash + coincurve), endpoints that lie about amounts, and EVM sweeps of native coins and OpenZeppelin ERC20 tokens end to end on an in-process Ethereum chain.
 
 It runs on Linux and macOS for Python 3.10-3.13 on every push.
 
@@ -200,4 +240,4 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Public domain via [The Unlicense](LICENSE): free for any personal or commercial use, no conditions.
 
-**No warranty.** This tool only reads public blockchain data and never moves funds, but you use it at your own risk. Not financial advice.
+**No warranty.** `scan`, `derive` and `check` only read public blockchain data. `sweep` moves funds, irreversibly, after your confirmation. You use this tool at your own risk. Not financial advice.
