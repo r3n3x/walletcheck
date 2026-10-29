@@ -36,7 +36,7 @@ import re
 import sys
 import time
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 # Output verbosity: 0 = quiet (results only), 1 = normal, 2 = verbose (every address)
 VERBOSITY = 1
@@ -782,9 +782,10 @@ def report(rows, btc_res, evm_res, out_path, utxo_res=None):
                                             nonce, tok, ""])
                 if native or nonce or d.get("tokens"):
                     bal = f"{fmt_amount(native or 0)} {sym}" + (f" + {tok}" if tok else "")
+                    nonce_txt = "unknown" if nonce is None else nonce  # a failed call is not 'None'
                     say(f"    {'*' if native or d.get('tokens') else '-'} line {r['line']} "
-                        f"{r['path']:<28} {ad}  {chain}: {bal}, nonce {nonce}", 2)
-                    hits.append((r["line"], chain, r["type"], r["path"], ad, bal, f"nonce {nonce}",
+                        f"{r['path']:<28} {ad}  {chain}: {bal}, nonce {nonce_txt}", 2)
+                    hits.append((r["line"], chain, r["type"], r["path"], ad, bal, f"nonce {nonce_txt}",
                                  bool(native) or bool(d.get("tokens"))))
 
     with open(out_path, "w", newline="") as f:

@@ -1,7 +1,16 @@
 # Changelog
 
-## Unreleased
+=======
+## 1.0.1 - 2026-10-29
 
+Fixes from the lookup-failure work (PR #1) and the follow-up review.
+
+- Failed EVM and token lookups are reported as unknown, never as empty wallets.
+- A failed token decimals call marks that token's balance as unknown instead of skipping it.
+- Failed BTC lookups are listed as UNKNOWN, not under "NO HISTORY AT ALL".
+- A partial EVM result that contains a real balance is still reported as found.
+- An unknown `--chains` name is rejected before any lookup starts.
+- A partially failed EVM lookup shows `nonce unknown` instead of `nonce None`.
 - Zcash (transparent `t1...`, BIP44 coin 133) and Firo (transparent `a...`, BIP44 coin 136) are derived from seeds, xprv master keys, WIF keys, hex keys and compressed public keys. Balances and history are checked via Blockchair (Zcash) and the Firo Insight explorer.
 - Shielded Zcash and Firo Spark addresses are not checked (they need viewing keys).
 
