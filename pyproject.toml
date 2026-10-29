@@ -48,6 +48,10 @@ Issues = "https://github.com/r3n3x/walletcheck/issues"
 
 [tool.setuptools]
 py-modules = ["walletcheck", "walletcheck_sweep"]
+packages = ["walletcheck_tokens"]
+
+[tool.setuptools.package-data]
+walletcheck_tokens = ["tokens.csv"]
 
 [tool.setuptools.dynamic]
 version = { attr = "walletcheck.__version__" }

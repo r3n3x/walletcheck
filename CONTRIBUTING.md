@@ -28,11 +28,27 @@ pytest -q
 
 The test suite runs fully offline. CI runs it on Linux and macOS for Python 3.10-3.13.
 
-## Adding an EVM chain or token
+## Adding a token
 
-Edit `EVM_CHAINS` at the top of `walletcheck.py`: add RPC endpoints (at least two, from
-different providers) and token contract addresses. Token decimals are read on-chain.
-Please link an official source for every contract address in your pull request.
+Tokens live in `walletcheck_tokens/tokens.csv`, not in the code. For a token only you need, use a
+personal list instead (see "Token lists" in the README). For the built-in list:
+
+1. Add one row per chain. The `address` must be in EIP-55 checksum form.
+2. Fill `coingecko_id` (the coin's API id on CoinGecko) or `source` (a link to the issuer's official
+   contract list). Rows without either are rejected.
+3. Set `decimals`. If the contract's `symbol()` differs from the label (e.g. `USD₮0`), set
+   `onchain_symbol`.
+4. Run `walletcheck tokens --verify` (must print 0 FAIL) and `pytest -q`.
+
+Prefer tokens issued natively on that chain, and say in `name` when a token is bridged rather than
+issued by its original issuer. A pull request that changes `tokens.csv` triggers the on-chain check in
+CI.
+
+## Adding an EVM chain
+
+Add the chain to `EVM_CHAINS` at the top of `walletcheck.py` with at least two RPC endpoints from
+different providers, add its chain id to `EVM_CHAIN_IDS` in `walletcheck_sweep.py`, then add its tokens
+to `tokens.csv` as above.
 
 ## License of contributions
 

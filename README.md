@@ -13,16 +13,16 @@ You are tidying up old notes and find a seed phrase, a WIF key or an xpub. Does 
    this computer                                       that goes online    public EVM RPCs, ...
 ```
 
-Current version: **1.2.0** ([changelog](CHANGELOG.md)). Check yours with `walletcheck --version`.
+Current version: **1.3.0** ([changelog](CHANGELOG.md)). Check yours with `walletcheck --version`.
 
-**Contents:** [Features](#features) · [What is checked](#what-is-checked) · [Install](#install) · [Quick start](#quick-start) · [Commands](#commands) · [Input formats](#input-formats) · [Reading the results](#reading-the-results) · [Adaptive scan](#how-the-adaptive-scan-works) · [Sweeping funds](#sweeping-funds-optional) · [Security model](#security-model) · [Limitations](#limitations) · [Verification](#verification)
+**Contents:** [Features](#features) · [What is checked](#what-is-checked) · [Install](#install) · [Quick start](#quick-start) · [Commands](#commands) · [Input formats](#input-formats) · [Reading the results](#reading-the-results) · [Adaptive scan](#how-the-adaptive-scan-works) · [Token lists](#token-lists) · [Sweeping funds](#sweeping-funds-optional) · [Security model](#security-model) · [Limitations](#limitations) · [Verification](#verification)
 
 ## Features
 
 - **Many input formats:** BIP39 seeds (with passphrase, 4-letter abbreviations), Electrum v1/v2 seeds (with seed extension), Monero seeds, xpub/ypub/zpub/xprv/yprv/zprv, WIF and hex private keys, public keys, plain BTC and EVM addresses.
 - **Many chains:**
   - **Bitcoin:** all common address types.
-  - **EVM:** 7 chains, native coins plus major tokens.
+  - **EVM:** 7 chains, native coins plus a verified token list that you can extend with your own tokens.
   - **Zcash and Firo:** transparent addresses.
   - **Monero:** address derived offline.
 - **Adaptive scanning:** checks the first few addresses of each wallet chain and only goes deeper where it finds activity, the way real wallets discover addresses.
@@ -40,18 +40,19 @@ Current version: **1.2.0** ([changelog](CHANGELOG.md)). Check yours with `wallet
 | **Firo** (transparent `a…`) | BIP44 coin 136 | Firo Insight explorer | ✅ confirmed balance | – |
 | **Monero** | Primary address only | none (see [Limitations](#limitations)) | – derived offline only | – |
 
-**Tokens checked:**
+**Tokens checked** (built-in list, [`walletcheck_tokens/tokens.csv`](walletcheck_tokens/tokens.csv)):
 
 | Chain | Tokens |
 |---|---|
-| Ethereum | USDT, USDC, DAI, WETH, WBTC |
-| Arbitrum | USDC, USDC.e, USDT, ARB |
-| Polygon | USDC, USDC.e, USDT |
-| Base | USDC |
-| Optimism | USDC, OP |
-| BNB Chain | USDT, USDC |
+| Ethereum | USDT, USDC, DAI, USDS, PYUSD, USDe, WETH, WBTC, MOR |
+| Arbitrum | USDC, USDC.e, USDT (USDT0), DAI, ARB, MOR |
+| Polygon | USDC, USDC.e, USDT (USDT0), DAI |
+| Base | USDC, DAI, USDT (bridged, not issued by Tether), MOR |
+| Optimism | USDC, DAI, USDT (bridged), USDT0, OP |
+| BNB Chain | USDT, USDC (Binance-bridged, 18 decimals) |
+| Avalanche | USDC, USDT, USDC.e, USDT.e |
 
-Avalanche has no tokens configured. To add chains or tokens, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Missing a token? Add it to your own [personal token list](#token-lists).
 
 ## Install
 
@@ -91,6 +92,8 @@ cd walletcheck && git pull && pip install -e ".[sweep]"
 
 If pip answers "already satisfied" without updating, add `--force-reinstall`. Then run `walletcheck --version` and `walletcheck selftest`.
 
+> **Updating a cloned install to 1.3.0 or later:** re-run `pip install -e ".[sweep]"` after `git pull`. The token list is a data package that an older editable install doesn't know about; without it, walletcheck stops with "the built-in token list ... is missing".
+
 ## Quick start
 
 ```bash
@@ -108,6 +111,7 @@ walletcheck scan           # paste your seeds/keys one by one (hidden), press En
 | `walletcheck derive` | Derives a fixed number of addresses into `addresses.csv` | **no** | no |
 | `walletcheck check` | Checks the addresses in `addresses.csv` | yes, public addresses only | no |
 | `walletcheck sweep` | Scans, then moves found BTC/EVM funds to a new wallet after your confirmation | yes | **yes** |
+| `walletcheck tokens` | Lists the ERC20 tokens that are checked; `--verify` checks each contract on-chain | only with `--verify`: contract addresses only | no |
 | `walletcheck selftest` | Checks the derivation code against published BIP and Electrum test vectors | no | no |
 
 All commands accept `-v` (verbose: every address and its result) or `-q` (quiet: results only). `walletcheck <command> --help` lists everything.
@@ -130,6 +134,8 @@ walletcheck scan --chains ethereum base   # only these EVM chains
 | `--max-index N` | 1000 | Hard cap per chain |
 | `--chains CHAIN …` | all | Limit the **EVM** chains. Bitcoin, Zcash and Firo are always checked |
 | `--proxy URL` | none | Route lookups through a proxy, e.g. Tor: `socks5h://127.0.0.1:9050` |
+| `--tokens FILE` | `~/.config/walletcheck/tokens.csv` if it exists | Your personal token list (see [Token lists](#token-lists)) |
+| `--no-builtin-tokens` | off | Check only the tokens in your personal list |
 | `--delay SEC` | 0.3 | Pause between Bitcoin/Zcash/Firo lookups |
 | `--addresses FILE` | `addresses.csv` | Where to save the list of checked addresses |
 | `--out FILE` | `balances.csv` | Where to save the per-address results |
@@ -155,11 +161,21 @@ Useful when you want to inspect or edit the address list before anything goes on
 | `--eth-count N` | 5 | Addresses per EVM path scheme |
 | `--out FILE` | `addresses.csv` | Output file |
 
-`check` takes `--in` (default `addresses.csv`), `--out` (default `balances.csv`), `--chains`, `--proxy` and `--delay` as in `scan`.
+`check` takes `--in` (default `addresses.csv`), `--out` (default `balances.csv`), `--chains`, `--proxy`, `--delay`, `--tokens` and `--no-builtin-tokens` as in `scan`.
 
 ### sweep
 
 See [Sweeping funds](#sweeping-funds-optional).
+
+### tokens
+
+```bash
+walletcheck tokens                        # list the tokens that are checked, per chain
+walletcheck tokens --verify               # check every contract on-chain
+walletcheck tokens --verify --chains base # only Base
+```
+
+Takes `--chains`, `--proxy`, `--tokens` and `--no-builtin-tokens`. See [Token lists](#token-lists).
 
 ### selftest
 
@@ -284,6 +300,49 @@ Wallets hand out addresses in order, so once several unused addresses follow the
 
 **Trade-off:** the default gap of 3 is tighter than the wallet standard of 20. Wallets that generated many unused addresses before receiving funds (merchant or donation setups) can be missed. For a thorough check use `--gap 20`, which also raises the minimum to 20 addresses per chain.
 
+## Token lists
+
+**Why an allowlist:** walletcheck asks each chain only for the balances of listed token contracts, matched by **contract address**. It never asks "which tokens does this address hold?". Airdropped spam tokens and look-alike fakes (a fake "USDT" contract) therefore never show up as balances, and a scan stays fast.
+
+**Two layers:**
+
+| Layer | Where | Loaded |
+|---|---|---|
+| **Built-in list** | [`walletcheck_tokens/tokens.csv`](walletcheck_tokens/tokens.csv), installed with walletcheck | always (unless `--no-builtin-tokens`) |
+| **Personal list** | `~/.config/walletcheck/tokens.csv` (or `$XDG_CONFIG_HOME/walletcheck/tokens.csv`) | automatically, when the file exists. `--tokens FILE` uses another file |
+
+Every built-in contract was cross-checked against CoinGecko and verified on-chain. A scheduled job re-verifies the list on the 1st and 15th of every month.
+
+**Add your own tokens:** create `~/.config/walletcheck/tokens.csv`:
+
+```csv
+# My own tokens. Lines starting with # are comments.
+chain,symbol,address,decimals,name
+ethereum,LINK,0x514910771AF9Ca656af840dff83E8264EcF986CA,18,Chainlink
+base,AERO,0x940181a94A35A4569E4529A3CDfB74e38FD98631,18,Aerodrome
+```
+
+Then check it: `walletcheck tokens --verify`. Each personal token is marked `(personal)`.
+
+| Column | Required | Rule |
+|---|---|---|
+| `chain` | yes | `ethereum`, `arbitrum`, `polygon`, `base`, `optimism`, `bsc` or `avalanche` |
+| `symbol` | yes | Your label in the results, up to 20 characters, no spaces or commas |
+| `address` | yes | The token **contract** address. Checksummed or all lower case; a mixed-case address with a wrong checksum is refused as a likely typo |
+| `decimals` | no | If given, `--verify` checks it. Balances always use the on-chain value |
+| `onchain_symbol` | no | What the contract's `symbol()` returns, if it differs from your label (e.g. `USD₮0`) |
+| `name`, `coingecko_id`, `source` | no | Notes for you |
+
+**Rules when the lists meet:**
+- A contract that is already listed is kept once.
+- A symbol already used on the same chain for a **different** contract is refused, so nothing can shadow a real token. Pick another symbol.
+- Any problem stops walletcheck **before anything goes online**, naming the file and line.
+- `sweep` moves personal tokens too.
+
+> ⚠️ `--verify` proves the contract exists and reports the expected symbol and decimals. It can't prove a token is the *real* one: scam tokens copy names and symbols. Take addresses from the issuer or CoinGecko, never from an airdrop or a DM.
+
+**Privacy:** `walletcheck tokens --verify` only sends contract addresses to public RPCs, never your wallet addresses.
+
 ## Sweeping funds (optional)
 
 `walletcheck sweep` moves what the scan found into a **new wallet you control**. It is the only command that moves funds. It needs the `[sweep]` extra (see [Install](#install)).
@@ -306,7 +365,7 @@ What happens:
 
 | | Bitcoin | EVM chains |
 |---|---|---|
-| **What is moved** | All confirmed outputs, all address types (legacy incl. uncompressed, nested and native segwit, taproot), in one transaction | Configured tokens first, then the native coin minus all fees |
+| **What is moved** | All confirmed outputs, all address types (legacy incl. uncompressed, nested and native segwit, taproot), in one transaction | Listed tokens (built-in and personal list) first, then the native coin minus all fees |
 | **Fee target** | mempool.space "hour fee" rate (about 1 hour), replace-by-fee enabled | EIP-1559: max fee = 2 × base fee + tip, the tip taken from what recent blocks actually paid (normally minutes); Base/Optimism L1 data fee included |
 | **Safety checks** | Every input is verified against its full previous transaction (hash, script, amount), so an endpoint can't misreport amounts; duplicate outputs are ignored | The endpoint's chain id must match; a failed call aborts instead of counting as zero; the tip is capped at 3× what recent blocks paid; the endpoint never receives a transaction signed by your key before you confirm |
 | **Skipped and reported** | Unconfirmed outputs; outputs worth less than their own fee; results below the dust limit; anything beyond one standard-size transaction (sweep again afterwards) | Tokens without native coin for gas (shows how much is needed); tokens that can't be transferred (frozen or paused); addresses with pending transactions |
@@ -357,7 +416,7 @@ Details and how to report vulnerabilities: [SECURITY.md](SECURITY.md).
 
 **Derivation and coverage**
 - Only standard derivation paths are checked; exotic custom paths are not.
-- Token coverage is limited to the tokens listed above. For complete token and NFT coverage, paste the *addresses* (never keys) into a portfolio viewer such as DeBank.
+- Only tokens on the [token lists](#token-lists) are checked; add missing ones to your personal list. For complete token and NFT coverage, paste the *addresses* (never keys) into a portfolio viewer such as DeBank.
 - **BIP39 seeds in languages with accented words (e.g. Spanish, French) may be rejected as unrecognised.** English seeds and 4-letter English abbreviations work.
 - Not supported: Electrum 2FA seeds (need TrustedCoin's co-signer), multisig wallets, and other coins such as Litecoin.
 
@@ -391,9 +450,10 @@ The test suite covers:
   - every Bitcoin signature re-checked with a second library ([bitcoin-utils](https://github.com/karask/python-bitcoin-utils) sighash + coincurve);
   - endpoints that lie about amounts;
   - EVM sweeps of native coins and OpenZeppelin ERC20 tokens, end to end on an in-process Ethereum chain;
-  - the interactive flow.
+  - the interactive flow;
+- token lists: the built-in list's format and checksums, the personal list loader and its validation, and on-chain verification (mocked).
 
-It runs on Linux and macOS for Python 3.10-3.13 on every push.
+It runs on Linux and macOS for Python 3.10-3.13 on every push. A separate job re-verifies every built-in token contract on-chain on the 1st and 15th of every month.
 
 ## Contributing
 

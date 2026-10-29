@@ -1,0 +1,27 @@
+name: verify-tokens
+
+# Re-checks every built-in token contract on-chain (contract code, symbol(), decimals()).
+# Only contract addresses are sent to public RPC endpoints; no wallet data is involved.
+on:
+  schedule:
+    - cron: "23 5 1,15 * *"     # 05:23 UTC on the 1st and 15th of every month
+  workflow_dispatch:             # manual run: Actions -> verify-tokens -> Run workflow
+  pull_request:
+    paths:
+      - "walletcheck_tokens/tokens.csv"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: pip install .
+      - name: Verify built-in token list on-chain
+        run: walletcheck tokens --verify
