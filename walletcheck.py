@@ -593,7 +593,14 @@ def btc_lookup(sess, addr):
 
 
 def utxo_lookup(sess, fam, addr):
-    """Transparent Zcash/Firo address -> {'sats', 'txs'}, or None when the lookup failed."""
+    """Transparent Zcash/Firo address -> {'sats', 'txs'}, or None when the lookup failed.
+
+    Units: both explorers return the balance in the chain's smallest unit (1 coin = 10^8 units).
+    Zcash: Blockchair 'balance' is in zatoshi. Verified on a funded address (t1MafeF942Pqv3uTJ1SeHTt3rf8kUM9bcmR):
+    Blockchair reports 100000000000, and the funding transaction's output to that address is also
+    100000000000 zatoshi = 1000 ZEC. Zcash COIN = 100000000 (src/amount.h).
+    Firo: Insight 'balanceSat' is in satoshi-like units (Firo COIN = 100000000, src/amount.h).
+    """
     cfg = UTXO_CHAINS[fam]
     for attempt in range(3):
         try:
@@ -864,7 +871,8 @@ def report(rows, btc_res, evm_res, out_path, utxo_res=None):
         say("\n[4] UNKNOWN - a lookup failed, these were NOT fully checked (re-run)", 0)
         say(f"    line(s): {', '.join(sorted(unknown_lines, key=lambda x: int(x)))}", 0)
     if xmr_lines:
-        say("\n[5] MONERO - address derived offline, NOT checked online", 0)
+        say("\n[5] MONERO - primary address derived offline, NOT checked online", 0)
+        say("    (only the first address, account 0 index 0; subaddresses are not derived)", 0)
         for line, ad in xmr_lines:
             say(f"    line {line} [{src.get(line)}] {ad}", 0)
         say("    Monero balances cannot be checked here privately: the chain must be scanned", 0)

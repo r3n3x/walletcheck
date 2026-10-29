@@ -79,7 +79,7 @@ def test_report_has_monero_section_and_no_false_no_history(tmp_path, capsys):
              "type": "primary-address", "path": "monero account 0", "address": ADDRESS}]
     W.report(rows, {}, {}, str(tmp_path / "b.csv"))
     out = capsys.readouterr().out
-    assert "[5] MONERO - address derived offline, NOT checked online" in out
+    assert "[5] MONERO - primary address derived offline, NOT checked online" in out
     assert ADDRESS in out and "monero-wallet-cli" in out
     assert "line(s): -" in out.split("[3] NO HISTORY AT ALL")[1].split("[4]")[0]
     assert "line 1" not in out.split("[1] BALANCES FOUND")[1].split("[2]")[0]  # not a balance hit

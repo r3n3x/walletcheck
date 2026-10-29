@@ -86,6 +86,23 @@ def test_blockchair_parsing_unused_used_and_null_count():
     assert W.utxo_lookup(Sess(Resp(200, spent)), "zec", ZEC_VECTORS[0][0]) == {"sats": 0, "txs": 1}
 
 
+# Verified unit: Blockchair balance of a funded Zcash address is zatoshi (1 ZEC = 1e8). The
+# funding tx output to the address is 100000000000 zatoshi = 1000 ZEC (decoded from the raw tx).
+VERIFIED_ZEC_ADDR = "t1MafeF942Pqv3uTJ1SeHTt3rf8kUM9bcmR"
+
+
+def test_blockchair_balance_is_zatoshi_verified_on_funded_address(tmp_path, capsys):
+    payload = {"data": {VERIFIED_ZEC_ADDR: {"address": {
+        "balance": 100000000000, "received": 100000000000, "spent": 0,
+        "transaction_count": None, "output_count": 1, "unspent_output_count": 1}}}}
+    res = W.utxo_lookup(Sess(Resp(200, payload)), "zec", VERIFIED_ZEC_ADDR)
+    assert res == {"sats": 100000000000, "txs": 1}  # null count + received > 0 -> one tx
+    rows = [{"line": "1", "source": "x", "family": "zec", "type": "p2pkh",
+             "path": "m/44'/133'/0'/0/0", "address": VERIFIED_ZEC_ADDR}]
+    W.report(rows, {}, {}, str(tmp_path / "b.csv"), {("zec", VERIFIED_ZEC_ADDR): res})
+    assert "1000.00000000 ZEC" in capsys.readouterr().out
+
+
 def test_firo_insight_parsing():
     payload = {"balanceSat": 0, "totalReceivedSat": 1182366, "txApperances": 2}
     assert W.utxo_lookup(Sess(Resp(200, payload)), "firo", FIRO_ADDR) == {"sats": 0, "txs": 2}
