@@ -1,0 +1,25 @@
+# ------------------------------------------------------------------
+# NEVER COMMIT SECRETS OR RESULTS
+# Keep your input files in ./private/ (ignored) or outside the repo.
+# ------------------------------------------------------------------
+private/
+secrets*.txt
+*secret*.txt
+*seed*.txt
+*keys*.txt
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/

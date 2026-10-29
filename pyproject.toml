@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "walletcheck"
+dynamic = ["version"]
+description = "Check whether old seed phrases, keys or xpubs still hold funds - secrets never leave your computer."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Unlicense"
+license-files = ["LICENSE"]
+keywords = ["bitcoin", "ethereum", "bip39", "electrum", "xpub", "wallet", "recovery", "balance"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "bip-utils>=2.9,<3",
+    "requests[socks]>=2.28",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7",
+    "embit>=0.8",
+    "eth-account>=0.10",
+]
+
+[project.scripts]
+walletcheck = "walletcheck:main"
+
+[project.urls]
+Homepage = "https://github.com/r3n3x/walletcheck"
+Issues = "https://github.com/r3n3x/walletcheck/issues"
+
+[tool.setuptools]
+py-modules = ["walletcheck"]
+
+[tool.setuptools.dynamic]
+version = { attr = "walletcheck.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
