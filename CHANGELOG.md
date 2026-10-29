@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1 - 2026-10-29
+
+Fixes from the lookup-failure work (PR #1) and the follow-up review.
+
+- Failed EVM and token lookups are reported as unknown, never as empty wallets.
+- A failed token decimals call marks that token's balance as unknown instead of skipping it.
+- Failed BTC lookups are listed as UNKNOWN, not under "NO HISTORY AT ALL".
+- A partial EVM result that contains a real balance is still reported as found.
+- An unknown `--chains` name is rejected before any lookup starts.
+- A partially failed EVM lookup shows `nonce unknown` instead of `nonce None`.
+
 ## 1.0.0 - 2026-10-29
 
 First public release.

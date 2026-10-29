@@ -80,3 +80,4 @@ def test_partial_failure_with_found_balance_is_still_reported(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[1] BALANCES FOUND" in out and "1.5 ETH" in out
     assert "lookup(s) FAILED" in out
+    assert "nonce unknown" in out and "nonce None" not in out
