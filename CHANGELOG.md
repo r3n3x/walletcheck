@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Zcash (transparent `t1...`, BIP44 coin 133) and Firo (transparent `a...`, BIP44 coin 136) are derived from seeds, xprv master keys, WIF keys, hex keys and compressed public keys. Balances and history are checked via Blockchair (Zcash) and the Firo Insight explorer.
+- Shielded Zcash and Firo Spark addresses are not checked (they need viewing keys).
+
 ## 1.0.0 - 2026-10-29
 
 First public release.

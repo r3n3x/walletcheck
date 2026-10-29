@@ -111,4 +111,5 @@ def test_matches_independent_libraries(b, idx):
     line, expected = CASES[idx]
     rows, rejected = derive_lines(b, [line], RECV, CHG, ETHN)
     assert not rejected
-    assert {r[5] for r in rows} == expected
+    # Zcash/Firo rows are covered by tests/test_utxo_chains.py, not by these libraries
+    assert {r[5] for r in rows if r[2] in ("btc", "evm")} == expected

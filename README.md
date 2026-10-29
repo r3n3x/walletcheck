@@ -18,6 +18,7 @@ You are tidying up old notes and find a seed phrase, a WIF key or an xpub. Does 
 - **Many input formats**: BIP39 seeds (with passphrase), Electrum v1 and v2 seeds (with seed extension), xpub/ypub/zpub/xprv/yprv/zprv, WIF and hex private keys, public keys, plain addresses.
 - **Bitcoin**: legacy, nested segwit, native segwit and taproot (BIP44/49/84/86), Electrum paths.
 - **EVM**: MetaMask/Trezor, Ledger Live and Ledger Legacy paths on Ethereum, Arbitrum, Polygon, Base, Optimism, BNB Chain and Avalanche, including major stablecoins.
+- **Zcash and Firo (transparent addresses)**: Zcash `t1...` (BIP44 coin 133) and Firo `a...` (BIP44 coin 136) from the same seed, WIF and hex keys, and checked against Blockchair (Zcash) and the Firo Insight explorer. Shielded addresses are not checked (see Limitations).
 - **Adaptive scanning**: checks the first few addresses and only goes deeper where it finds activity, the same way real wallets discover addresses. Change addresses and extra accounts are only checked when used.
 - **Honest results**: rejected inputs and failed lookups are flagged loudly, never shown as "empty". Typos in seed phrases are diagnosed by word *position*, without printing your words.
 - **Verified**: published test vectors (BIP, Electrum) and cross-validation against independent libraries run automatically on every change.
@@ -166,6 +167,8 @@ An unused seed costs about 55 lookups instead of several hundred. A used wallet 
 - Only standard derivation paths are checked. Exotic custom paths are not.
 - Token coverage is limited to major stablecoins and a few chain tokens. For complete token and NFT coverage, paste the *addresses* (never keys) into a portfolio viewer such as DeBank.
 - Not supported: Electrum 2FA seeds (need TrustedCoin's cosigner), multisig wallets, Litecoin and other non-EVM altcoins.
+- **Zcash shielded (`z…`, `u…`) and Firo Spark addresses are not checked.** Seeing their balances needs a viewing key and a light-client scan. A public explorer would receive the viewing key, which breaks the privacy promise, so this tool does not do it.
+- Zcash and Firo lookups show the confirmed balance only. Firo unconfirmed amounts are not included.
 - Public RPC endpoints can be rate-limited or change. Failed lookups are reported; re-run to retry.
 
 ## Verification
