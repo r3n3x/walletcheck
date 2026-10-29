@@ -15,7 +15,7 @@ You are tidying up old notes and find a seed phrase, a WIF key or an xpub. Does 
 
 ## Features
 
-- **Many input formats**: BIP39 seeds (with passphrase), Electrum v1 and v2 seeds (with seed extension), xpub/ypub/zpub/xprv/yprv/zprv, WIF and hex private keys, public keys, plain addresses.
+- **Many input formats**: BIP39 seeds (with passphrase), Electrum v1 and v2 seeds (with seed extension), Monero seeds (address derived offline), xpub/ypub/zpub/xprv/yprv/zprv, WIF and hex private keys, public keys, plain addresses.
 - **Bitcoin**: legacy, nested segwit, native segwit and taproot (BIP44/49/84/86), Electrum paths.
 - **EVM**: MetaMask/Trezor, Ledger Live and Ledger Legacy paths on Ethereum, Arbitrum, Polygon, Base, Optimism, BNB Chain and Avalanche, including major stablecoins.
 - **Zcash and Firo (transparent addresses)**: Zcash `t1...` (BIP44 coin 133) and Firo `a...` (BIP44 coin 136) from the same seed, WIF and hex keys, and checked against Blockchair (Zcash) and the Firo Insight explorer. Shielded addresses are not checked (see Limitations).
@@ -169,6 +169,7 @@ An unused seed costs about 55 lookups instead of several hundred. A used wallet 
 - Not supported: Electrum 2FA seeds (need TrustedCoin's cosigner), multisig wallets, Litecoin and other non-EVM altcoins.
 - **Zcash shielded (`z…`, `u…`) and Firo Spark addresses are not checked.** Seeing their balances needs a viewing key and a light-client scan. A public explorer would receive the viewing key, which breaks the privacy promise, so this tool does not do it.
 - Zcash and Firo lookups show the confirmed balance only. Firo unconfirmed amounts are not included.
+- **Monero is derived but not checked.** Seeing a Monero balance requires scanning the blockchain with the private view key; no website can do that without learning the key, so walletcheck only derives the address offline and shows how to check it in a view-only wallet on your own node. MyMonero-style 13-word seeds are not supported.
 - Public RPC endpoints can be rate-limited or change. Failed lookups are reported; re-run to retry.
 
 ## Verification

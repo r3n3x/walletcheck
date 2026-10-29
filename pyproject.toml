@@ -29,6 +29,7 @@ test = [
     "pytest>=7",
     "embit>=0.8",
     "eth-account>=0.10",
+    "monero>=1.1",
 ]
 
 [project.scripts]

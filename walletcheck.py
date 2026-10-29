@@ -21,6 +21,7 @@ Examples:
 
 Input formats (one per line in a file, '#' lines ignored):
   12-24 word seed phrase (BIP39, Electrum v1/v2), optionally "<words> | <passphrase>"
+  25-word Monero seed (24 without checksum word): address derived offline, not checked online
   xpub/ypub/zpub/xprv/yprv/zprv, WIF private key, 64-hex private key,
   hex public key, BTC address (1.../3.../bc1...), EVM address (0x...)
 
@@ -36,7 +37,7 @@ import re
 import sys
 import time
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 # Output verbosity: 0 = quiet (results only), 1 = normal, 2 = verbose (every address)
 VERBOSITY = 1
@@ -317,6 +318,23 @@ def _seed_interpretations(b, m, passphrase, item, a, seqs, n_words):
     return labels
 
 
+def _monero_seqs(b, words, item, seqs):
+    """If the words form a valid Monero seed (25 words, or 24 without the checksum word),
+    append the primary address as an offline ('xmr') sequence. Returns True on success.
+    Monero balances cannot be looked up privately without the private view key, so the
+    address is only derived here and the run tells the user how to check it offline."""
+    if len(words) not in (24, 25):
+        return False
+    mn = " ".join(words)
+    if not b.MoneroMnemonicValidator().IsValid(mn):
+        return False
+    m = b.Monero.FromSeed(b.MoneroSeedGenerator(mn).Generate())
+    addr = m.PrimaryAddress()
+    rows = [[item, "monero-seed", "xmr", "primary-address", "monero account 0", addr]]
+    seqs.append(Seq(item, rows[0][1], "xmr", "static", "monero (not checked online)", lambda i: rows))
+    return True
+
+
 def derive_seed(b, words, passphrase, item, a, seqs):
     n = len(words)
     labels = _seed_interpretations(b, " ".join(words), passphrase, item, a, seqs, n)
@@ -334,6 +352,10 @@ def derive_seed(b, words, passphrase, item, a, seqs):
         labels = _seed_interpretations(b, " ".join(expanded), passphrase, item, a, seqs, n)
         if labels:
             return f"seed{n} (4-letter words expanded) -> " + " + ".join(labels)
+
+    # Monero seed without checksum word (24 words): only if BIP39/Electrum failed
+    if n == 24 and _monero_seqs(b, words, item, seqs):
+        return "seed24-Monero (no checksum word)"
 
     # Diagnose without revealing any word: report positions only
     e1 = set(_wordlist(b, "electrum/mnemonic_v1/wordlist/english.txt"))
@@ -356,6 +378,9 @@ def derive_item(b, line, item, a, seqs):
     # --- seed phrase (optional "| passphrase") ---
     words_part, _, passphrase = s.partition("|")
     words = words_part.lower().split()
+    if len(words) == 25 and all(w.isalpha() for w in words):
+        if _monero_seqs(b, words, item, seqs):
+            return "seed25-Monero"
     if len(words) in (12, 13, 15, 18, 21, 24) and all(w.isalpha() for w in words):
         return derive_seed(b, words, passphrase.strip(), item, a, seqs)
 
@@ -684,7 +709,8 @@ def cmd_check(a):
     btc = sorted({r["address"] for r in rows if r["family"] == "btc"})
     evm = sorted({r["address"] for r in rows if r["family"] == "evm"}, key=str.lower)
     utxo = sorted({(r["family"], r["address"]) for r in rows if r["family"] in UTXO_CHAINS})
-    if not btc and not evm and not utxo:
+    xmr = [r for r in rows if r["family"] == "xmr"]
+    if not btc and not evm and not utxo and not xmr:
         banner([f"No addresses in {a.infile} - NO balance check performed."])
         sys.exit(1)
     say(f"Checking {len(btc)} BTC address(es) and {len(evm)} EVM address(es) "
@@ -711,6 +737,8 @@ def cmd_check(a):
         for chain in chains:
             say(f"  EVM: checking {chain} ...")
             evm_check_chain(sess, chain, EVM_CHAINS[chain], evm, evm_res)
+    if xmr:
+        say(f"  Monero: {len(xmr)} address(es) derived offline, NOT checked online")
     say(f"  Done in {time.time() - t0:.0f}s.")
     report(rows, btc_res, evm_res, a.out, utxo_res)
 
@@ -729,9 +757,14 @@ def report(rows, btc_res, evm_res, out_path, utxo_res=None):
     """rows: dicts with line/source/family/type/path/address. Writes CSV, prints summary."""
     out_rows, hits, errors = [], [], 0
     unknown_lines = set()  # lines with a failed lookup: unknown, never 'no history'
+    xmr_lines = []         # Monero: derived offline, never checked online
     for r in rows:
         ad, fam = r["address"], r["family"]
         base = [r["line"], r["source"], fam, r["type"], r["path"], ad]
+        if fam == "xmr":
+            out_rows.append(base + ["monero", "", "", "", "NOT CHECKED (offline)"])
+            xmr_lines.append((r["line"], ad))
+            continue
         if fam == "btc":
             d = btc_res.get(ad)
             if d is None:
@@ -823,13 +856,23 @@ def report(rows, btc_res, evm_res, out_path, utxo_res=None):
     for line in sorted(used, key=lambda x: int(x)):
         say(f"    line {line} [{src.get(line)}]: {len(used[line])} address/chain combination(s) with history", 0)
 
-    never = sorted({r["line"] for r in rows} - set(used) - {f[0] for f in funded} - unknown_lines,
-                   key=lambda x: int(x))
+    never = sorted({r["line"] for r in rows} - set(used) - {f[0] for f in funded} - unknown_lines
+                   - {l for l, _ in xmr_lines}, key=lambda x: int(x))
     say("\n[3] NO HISTORY AT ALL on the checked addresses", 0)
     say(f"    line(s): {', '.join(never) if never else '-'}", 0)
     if unknown_lines:
         say("\n[4] UNKNOWN - a lookup failed, these were NOT fully checked (re-run)", 0)
         say(f"    line(s): {', '.join(sorted(unknown_lines, key=lambda x: int(x)))}", 0)
+    if xmr_lines:
+        say("\n[5] MONERO - address derived offline, NOT checked online", 0)
+        for line, ad in xmr_lines:
+            say(f"    line {line} [{src.get(line)}] {ad}", 0)
+        say("    Monero balances cannot be checked here privately: the chain must be scanned", 0)
+        say("    with the private view key, and no explorer can do that without learning it.", 0)
+        say("    Verify in a view-only wallet on your own node:", 0)
+        say("      monero-wallet-cli --restore-deterministic-wallet   (seed, empty password, 'balance')", 0)
+        say("    The wallet scans locally; only your node sees the scan. Guide: getmonero.org", 0)
+        say("    resources, 'How to restore your wallet from seed'.", 0)
 
     say(f"\nFull per-address results: {out_path}   Lookup failures: {errors}", 0)
     if funded:
@@ -984,7 +1027,8 @@ def cmd_scan(a):
         all_rows.extend(rows)
         total_fail += fails
         s.used = last >= 0
-        state = f"USED (last used #{last})" if s.used else "unused"
+        state = ("OFFLINE (not checked online - see results)" if s.family == "xmr"
+                 else f"USED (last used #{last})" if s.used else "unused")
         if s.kind != "static":
             say(f"  line {s.item:>3} {s.desc:<38} checked {n_checked:>3}  {state}"
                 + (f"  ({fails} lookup failures)" if fails else ""))
