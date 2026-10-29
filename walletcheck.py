@@ -120,6 +120,16 @@ EVM_CHAINS = {
 
 BTC_APIS = ["https://mempool.space/api", "https://blockstream.info/api"]
 
+# Transparent (t-address / P2PKH) Zcash and Firo. Shielded addresses are out of scope:
+# they need viewing keys and a light-client scan, so they cannot be checked privately.
+# p2pkh = mainnet version bytes (Zcash chainparams PUBKEY_ADDRESS {0x1C,0xB8}; Firo PUBKEY_ADDRESS 82).
+UTXO_CHAINS = {
+    "zec": {"name": "Zcash", "symbol": "ZEC", "coin": 133, "p2pkh": b"\x1c\xb8",
+            "api": "https://api.blockchair.com/zcash/dashboards/address/{addr}?limit=0"},
+    "firo": {"name": "Firo", "symbol": "FIRO", "coin": 136, "p2pkh": b"\x52",
+             "api": "https://explorer.firo.org/insight-api-zcoin/addr/{addr}"},
+}
+
 # Extended key version bytes (mainnet)
 XPUB_VERS = {"xpub": "0488b21e", "ypub": "049d7cb2", "zpub": "04b24746"}
 XPRV_VERS = {"xprv": "0488ade4", "yprv": "049d7878", "zprv": "04b2430c"}
@@ -202,6 +212,22 @@ def _chain_seqs(b, item, label, node, chain_types, base_desc, next_account=None)
     return out
 
 
+def _utxo_account(b, root, item, label, fam, acct):
+    """BIP44 account `acct` of a transparent UTXO chain: receive + change, next account on demand."""
+    cfg = UTXO_CHAINS[fam]
+    base = f"m/44'/{cfg['coin']}'/{acct}'"
+    nxt = (lambda: _utxo_account(b, root, item, label, fam, acct + 1)) if acct + 1 < MAX_ACCOUNTS else None
+    node = root.DerivePath(base)
+
+    def mk(chain):
+        ch = node.ChildKey(chain)
+        return lambda i: [[item, label, fam, "p2pkh", f"{base}/{chain}/{i}",
+                           b.P2PKHAddrEncoder.EncodeKey(ch.ChildKey(i).PublicKey().KeyObject(),
+                                                        net_ver=cfg["p2pkh"])]]
+    change = Seq(item, label, fam, "change", f"{base}/1/*", mk(1))
+    return [Seq(item, label, fam, "recv", f"{base}/0/*", mk(0), [change], nxt)]
+
+
 def derive_from_root(b, root, item, a, seqs, label):
     """root: Bip32Secp256k1 master (private). Standard wallet paths."""
     # Bitcoin: BIP44/49/84/86, receive + change, accounts discovered adaptively
@@ -222,6 +248,9 @@ def derive_from_root(b, root, item, a, seqs, label):
             path = tmpl.format(i=i)
             return [[item, label, "evm", scheme, path, eth_addr(b, root.DerivePath(path).PublicKey().KeyObject())]]
         seqs.append(Seq(item, label, "evm", "evm", f"{scheme} {tmpl.replace('{i}', '*')}", fn))
+    # Transparent Zcash and Firo (BIP44 accounts, same discovery rules as BTC)
+    for fam in UTXO_CHAINS:
+        seqs.extend(_utxo_account(b, root, item, label, fam, 0))
 
 
 def swap_version(b, key_str, new_ver_hex):
@@ -373,6 +402,10 @@ def _single_item(b, s, item, rows):
         for t, addr in btc_addrs_from_pub(b, pub, types):
             rows.append([item, "WIF", "btc", t, "-", addr])
         rows.append([item, "WIF", "evm", "same-key", "-", eth_addr(b, pub)])
+        if mode != b.P2PKHPubKeyModes.UNCOMPRESSED:  # Zcash/Firo: compressed keys only
+            for fam, cfg in UTXO_CHAINS.items():
+                rows.append([item, "WIF", fam, "p2pkh", "-",
+                             b.P2PKHAddrEncoder.EncodeKey(pub, net_ver=cfg["p2pkh"])])
         return "WIF private key"
 
     # --- hex private key (EVM style, also checked as BTC) ---
@@ -382,6 +415,9 @@ def _single_item(b, s, item, rows):
         except Exception:
             return "INVALID hex private key"
         rows.append([item, "hex-privkey", "evm", "same-key", "-", eth_addr(b, pub)])
+        for fam, cfg in UTXO_CHAINS.items():  # compressed key (the default for this input)
+            rows.append([item, "hex-privkey", fam, "p2pkh", "-",
+                         b.P2PKHAddrEncoder.EncodeKey(pub, net_ver=cfg["p2pkh"])])
         for t, addr in btc_addrs_from_pub(b, pub, ALL_BTC + ["p2pkh-uncompressed"]):
             rows.append([item, "hex-privkey", "btc", t, "-", addr])
         return "hex private key"
@@ -397,6 +433,10 @@ def _single_item(b, s, item, rows):
         for t, addr in btc_addrs_from_pub(b, pub, types):
             rows.append([item, "pubkey", "btc", t, "-", addr])
         rows.append([item, "pubkey", "evm", "same-key", "-", eth_addr(b, pub)])
+        if h[:2] in ("02", "03"):  # Zcash/Firo: compressed keys only
+            for fam, cfg in UTXO_CHAINS.items():
+                rows.append([item, "pubkey", fam, "p2pkh", "-",
+                             b.P2PKHAddrEncoder.EncodeKey(pub, net_ver=cfg["p2pkh"])])
         return "public key"
 
     # --- plain addresses ---
@@ -527,6 +567,30 @@ def btc_lookup(sess, addr):
     return None
 
 
+def utxo_lookup(sess, fam, addr):
+    """Transparent Zcash/Firo address -> {'sats', 'txs'}, or None when the lookup failed."""
+    cfg = UTXO_CHAINS[fam]
+    for attempt in range(3):
+        try:
+            r = sess.get(cfg["api"].format(addr=addr), timeout=20)
+            if r.status_code in (429, 430):  # Blockchair signals rate limits with 430
+                time.sleep(2 + attempt * 3)
+                continue
+            r.raise_for_status()
+            j = r.json()
+            if fam == "zec":
+                info = j["data"][addr]["address"]
+                txs = info["transaction_count"]
+                if txs is None:  # Blockchair leaves this null when there is no history
+                    txs = 1 if info["received"] else 0
+                return {"sats": int(info["balance"]), "txs": int(txs)}
+            # Firo Insight: confirmed balance only; field name 'txApperances' is the API's spelling
+            return {"sats": int(j["balanceSat"]), "txs": int(j["txApperances"])}
+        except Exception:
+            time.sleep(1)
+    return None
+
+
 def rpc_batch(sess, rpcs, calls):
     """calls: list of (method, params). Returns list of results (None on per-call error)."""
     payload = [{"jsonrpc": "2.0", "id": i, "method": m, "params": p} for i, (m, p) in enumerate(calls)]
@@ -619,7 +683,8 @@ def cmd_check(a):
         rows = list(csv.DictReader(f))
     btc = sorted({r["address"] for r in rows if r["family"] == "btc"})
     evm = sorted({r["address"] for r in rows if r["family"] == "evm"}, key=str.lower)
-    if not btc and not evm:
+    utxo = sorted({(r["family"], r["address"]) for r in rows if r["family"] in UTXO_CHAINS})
+    if not btc and not evm and not utxo:
         banner([f"No addresses in {a.infile} - NO balance check performed."])
         sys.exit(1)
     say(f"Checking {len(btc)} BTC address(es) and {len(evm)} EVM address(es) "
@@ -635,13 +700,19 @@ def cmd_check(a):
             say(f"  Bitcoin: {i}/{len(btc)} looked up")
         time.sleep(a.delay)
 
+    utxo_res = {}
+    for fam, ad in utxo:
+        say(f"  {UTXO_CHAINS[fam]['name']}: {ad}")
+        utxo_res[(fam, ad)] = utxo_lookup(sess, fam, ad)
+        time.sleep(a.delay)
+
     evm_res = {}
     if evm:
         for chain in chains:
             say(f"  EVM: checking {chain} ...")
             evm_check_chain(sess, chain, EVM_CHAINS[chain], evm, evm_res)
     say(f"  Done in {time.time() - t0:.0f}s.")
-    report(rows, btc_res, evm_res, a.out)
+    report(rows, btc_res, evm_res, a.out, utxo_res)
 
 
 def fmt_amount(v):
@@ -653,7 +724,8 @@ def fmt_amount(v):
     return f"{v:,.6f}".rstrip("0").rstrip(".")
 
 
-def report(rows, btc_res, evm_res, out_path):
+def report(rows, btc_res, evm_res, out_path, utxo_res=None):
+    utxo_res = utxo_res or {}
     """rows: dicts with line/source/family/type/path/address. Writes CSV, prints summary."""
     out_rows, hits, errors = [], [], 0
     unknown_lines = set()  # lines with a failed lookup: unknown, never 'no history'
@@ -675,6 +747,22 @@ def report(rows, btc_res, evm_res, out_path):
             if d["sats"] or d["txs"]:
                 hits.append((r["line"], "bitcoin", r["type"], r["path"], ad,
                              f"{btc_amt:.8f} BTC", f"{d['txs']} txs", d["sats"] > 0))
+        elif fam in UTXO_CHAINS:
+            cfg = UTXO_CHAINS[fam]
+            d = utxo_res.get((fam, ad))
+            if d is None:
+                errors += 1
+                unknown_lines.add(r["line"])
+                out_rows.append(base + [cfg["name"], "", "", "", "LOOKUP FAILED"])
+                say(f"    ? line {r['line']} {r['path']:<28} {ad}  {cfg['name']} LOOKUP FAILED", 2)
+                continue
+            amt = d["sats"] / 1e8
+            out_rows.append(base + [cfg["name"], f"{amt:.8f}", d["txs"], "", ""])
+            say(f"    {'*' if d['sats'] else '-'} line {r['line']} {r['path']:<28} {ad}  "
+                f"{amt:.8f} {cfg['symbol']}, {d['txs']} tx", 2)
+            if d["sats"] or d["txs"]:
+                hits.append((r["line"], cfg["name"], r["type"], r["path"], ad,
+                             f"{amt:.8f} {cfg['symbol']}", f"{d['txs']} txs", d["sats"] > 0))
         else:
             for chain, d in evm_res.get(ad.lower(), {}).items():
                 sym = EVM_CHAINS[chain]["symbol"]
@@ -804,11 +892,16 @@ class Scanner:
     def __init__(self, a):
         self.a = a
         self.sess = _session(a.proxy)
-        self.btc_res, self.evm_res = {}, {}
+        self.btc_res, self.evm_res, self.utxo_res = {}, {}, {}
         self.lookups = 0
         self.chains = {c: EVM_CHAINS[c] for c in select_chains(a.chains)}
 
     def lookup(self, rows):
+        for fam, ad in dict.fromkeys((r[2], r[5]) for r in rows if r[2] in UTXO_CHAINS):
+            if (fam, ad) not in self.utxo_res:
+                self.utxo_res[(fam, ad)] = utxo_lookup(self.sess, fam, ad)
+                self.lookups += 1
+                time.sleep(self.a.delay)
         btc = [r[5] for r in rows if r[2] == "btc" and r[5] not in self.btc_res]
         evm = sorted({r[5] for r in rows if r[2] == "evm" and r[5].lower() not in self.evm_res}, key=str.lower)
         for ad in dict.fromkeys(btc):
@@ -822,6 +915,9 @@ class Scanner:
 
     def used(self, row):
         fam, ad = row[2], row[5]
+        if fam in UTXO_CHAINS:
+            d = self.utxo_res.get((fam, ad))
+            return bool(d and (d["sats"] or d["txs"]))
         if fam == "btc":
             d = self.btc_res.get(ad)
             return bool(d and (d["sats"] or d["txs"]))
@@ -829,6 +925,8 @@ class Scanner:
                    for d in self.evm_res.get(ad.lower(), {}).values())
 
     def failed(self, row):
+        if row[2] in UTXO_CHAINS:
+            return self.utxo_res.get((row[2], row[5])) is None
         if row[2] == "btc":
             return self.btc_res.get(row[5]) is None
         return any(d.get("error") for d in self.evm_res.get(row[5].lower(), {}).values())
@@ -907,7 +1005,8 @@ def cmd_scan(a):
 
     say("\nStep 3/3 - Results")
     keys = ["line", "source", "family", "type", "path", "address"]
-    report([{k: str(v) for k, v in zip(keys, r)} for r in all_rows], sc.btc_res, sc.evm_res, a.out)
+    report([{k: str(v) for k, v in zip(keys, r)} for r in all_rows], sc.btc_res, sc.evm_res, a.out,
+           sc.utxo_res)
     if total_fail:
         say("NOTE: failed lookups count as 'unused' for the gap rule, so a chain may have "
             "stopped early. Re-run to be sure.", 0)
