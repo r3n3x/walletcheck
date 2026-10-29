@@ -11,6 +11,9 @@ Thanks for helping! Bug reports, new chains/tokens, wallet path schemes and docu
 3. **Derivation changes need test vectors.** Add an official vector (BIP, Electrum, wallet
    vendor docs) or extend the independent cross-validation in `tests/test_crossval.py`.
 4. **A failed lookup must never look like an empty wallet.**
+5. **Sweep changes need end-to-end tests** (`tests/test_sweep_*.py`): independent signature checks for
+   Bitcoin, the in-process chain for EVM, and the leak checks in `tests/test_sweep_cli.py`. Nothing may
+   be broadcast without the user's confirmation.
 
 ## Development setup
 
@@ -35,3 +38,8 @@ Please link an official source for every contract address in your pull request.
 
 This project is public domain ([The Unlicense](LICENSE)). By submitting a contribution you
 agree to dedicate it to the public domain under the same terms.
+
+## Releasing
+
+Bump `__version__` in `walletcheck.py`, move the changes into a dated section of `CHANGELOG.md`, and
+keep the README's "Current version" line in sync.

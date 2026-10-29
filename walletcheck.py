@@ -20,6 +20,9 @@ Examples:
   walletcheck scan --in secrets.txt -v   # from a file, verbose
   walletcheck derive --in secrets.txt && walletcheck check
 
+Checks: Bitcoin, 7 EVM chains (native coins + major tokens), Zcash/Firo transparent
+addresses. Monero: address derived offline only. Sweep: Bitcoin and EVM.
+
 Input formats (one per line in a file, '#' lines ignored):
   12-24 word seed phrase (BIP39, Electrum v1/v2), optionally "<words> | <passphrase>"
   25-word Monero seed (24 without checksum word): address derived offline, not checked online
@@ -38,7 +41,7 @@ import re
 import sys
 import time
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # Output verbosity: 0 = quiet (results only), 1 = normal, 2 = verbose (every address)
 VERBOSITY = 1
@@ -878,8 +881,9 @@ def report(rows, btc_res, evm_res, out_path, utxo_res=None):
             say(f"    line {line} [{src.get(line)}] {ad}", 0)
         say("    Monero balances cannot be checked here privately: the chain must be scanned", 0)
         say("    with the private view key, and no explorer can do that without learning it.", 0)
-        say("    Verify in a view-only wallet on your own node:", 0)
-        say("      monero-wallet-cli --restore-deterministic-wallet   (seed, empty password, 'balance')", 0)
+        say("    Check it with monero-wallet-cli connected to your own node:", 0)
+        say("      --restore-deterministic-wallet   restores the FULL wallet from the seed ('balance')", 0)
+        say("      --generate-from-view-key         view-only: needs the address and private view key", 0)
         say("    The wallet scans locally; only your node sees the scan. Guide: getmonero.org", 0)
         say("    resources, 'How to restore your wallet from seed'.", 0)
 
@@ -1092,13 +1096,15 @@ def main(argv=None):
 
     def check_opts(x):
         x.add_argument("--proxy", help="route lookups through a proxy, e.g. socks5h://127.0.0.1:9050 (Tor)")
-        x.add_argument("--delay", type=float, default=0.3, help="seconds between BTC lookups (default 0.3)")
-        x.add_argument("--chains", nargs="*", metavar="CHAIN", help=f"EVM chains to check: {' '.join(EVM_CHAINS)}")
+        x.add_argument("--delay", type=float, default=0.3, help="seconds between BTC/Zcash/Firo lookups (default 0.3)")
+        x.add_argument("--chains", nargs="*", metavar="CHAIN",
+                      help=f"limit the EVM chains (default all): {' '.join(EVM_CHAINS)}")
 
     s = sub.add_parser("scan", parents=[common], help="derive + check in one run, adaptive (recommended)")
     s.add_argument("--in", dest="infile", help="secrets file (omit for a hidden prompt)")
-    s.add_argument("--addresses", default="addresses.csv", help="where to save the checked addresses")
-    s.add_argument("--out", default="balances.csv", help="where to save per-address results")
+    s.add_argument("--addresses", default="addresses.csv",
+                   help="where to save the checked addresses (default addresses.csv)")
+    s.add_argument("--out", default="balances.csv", help="where to save per-address results (default balances.csv)")
     s.add_argument("--initial", type=int, default=10, help="BTC addresses always checked per chain (default 10)")
     s.add_argument("--eth-initial", type=int, default=5, help="EVM addresses always checked per scheme (default 5)")
     s.add_argument("--gap", type=int, default=3,
@@ -1110,13 +1116,14 @@ def main(argv=None):
 
     d = sub.add_parser("derive", parents=[common], help="secrets -> addresses.csv, fixed counts, no network")
     d.add_argument("--in", dest="infile", help="secrets file (omit for a hidden prompt)")
-    d.add_argument("--out", default="addresses.csv")
+    d.add_argument("--out", default="addresses.csv", help="where to save the addresses (default addresses.csv)")
     derive_opts(d)
     d.set_defaults(fn=cmd_derive)
 
     c = sub.add_parser("check", parents=[common], help="addresses.csv -> balances (public data only)")
-    c.add_argument("--in", dest="infile", default="addresses.csv")
-    c.add_argument("--out", default="balances.csv")
+    c.add_argument("--in", dest="infile", default="addresses.csv",
+                   help="address list from `derive` (default addresses.csv)")
+    c.add_argument("--out", default="balances.csv", help="where to save per-address results (default balances.csv)")
     check_opts(c)
     c.set_defaults(fn=cmd_check)
 
