@@ -12,7 +12,8 @@
   independent review: endpoints never see a transaction signed by the user's key before confirmation; tip
   capped at 3x recently paid tips; unusual fees need a typed `yes`; frozen tokens no longer block the
   native sweep; pending transactions, duplicate outputs, oversized transactions, malformed destinations
-  and contract wallets missing on the target chain are handled.
+  and contract wallets missing on the target chain are handled; the tip is cross-checked against an
+  independent endpoint.
 - Zcash (transparent `t1...`, BIP44 coin 133) and Firo (transparent `a...`, BIP44 coin 136) are derived from seeds, xprv master keys, WIF keys, hex keys and compressed public keys. Balances and history are checked via Blockchair (Zcash) and the Firo Insight explorer.
 - Shielded Zcash and Firo Spark addresses are not checked (they need viewing keys).
 - Monero: a 25-word Monero seed (or 24 words without the checksum word) is detected and the

@@ -394,7 +394,9 @@ def build_evm_sweep(rpc, chain, acct, dest, tokens, expected_chain_id=None):
     src = acct.address
     nonce = _int(rpc.call("eth_getTransactionCount", [src, "pending"]))
     confirmed_nonce = _int(rpc.call("eth_getTransactionCount", [src, "latest"]))
-    if nonce != confirmed_nonce:
+    if nonce < confirmed_nonce:
+        raise SweepError("the endpoint returned inconsistent data (lagging node?). Try again or use another endpoint")
+    if nonce > confirmed_nonce:
         raise SweepError(f"{src} has {nonce - confirmed_nonce} pending transaction(s). Wait until they "
                          "confirm (or replace them in a wallet), then sweep again")
     balance = _int(rpc.call("eth_getBalance", [src, "latest"]))
@@ -516,27 +518,52 @@ def contract_destination_check(chain, code_by_chain):
     A smart-contract wallet (e.g. a Safe) usually exists only on the chains it was deployed to;
     funds sent to the same address on another chain can be lost. Returns (verdict, message)."""
     has_code = {c for c, v in code_by_chain.items() if v}
-    unknown = {c for c, v in code_by_chain.items() if v is None}
+    unknown = sorted(c for c, v in code_by_chain.items() if v is None)
     if has_code and not code_by_chain.get(chain):
         return "refuse", (f"this address is a smart contract on {', '.join(sorted(has_code))} but NOT on "
                           f"{chain}. Funds sent there could be lost. Use a different destination")
+    if unknown:
+        return "confirm", (f"could not check whether the destination is a smart contract on {', '.join(unknown)}. "
+                           f"If it is a contract wallet (e.g. a Safe) that does not exist on {chain}, funds could be lost")
     if code_by_chain.get(chain):
         return "warn", "the destination is a smart contract on this chain. Make sure it can receive these assets"
-    if chain in unknown:
-        return "warn", f"could not check whether the destination is a contract on {chain}"
     return "ok", ""
 
 
 def _code_by_chain(a, dest, chain, rpc):
     """Contract code at `dest` on every configured EVM chain (None = could not check)."""
-    out = {}
+    out, sess = {}, W._session(a.proxy)
     for c, cfg in W.EVM_CHAINS.items():
-        client = rpc if c == chain else EvmRpc(W._session(a.proxy), cfg["rpcs"][0])
-        try:
-            out[c] = client.call("eth_getCode", [dest, "latest"]) not in ("0x", "0x0", None, "")
-        except Exception:
-            out[c] = None
+        clients = ([rpc] if c == chain else []) + [EvmRpc(sess, u) for u in cfg["rpcs"]]
+        out[c] = None
+        for client in clients:                       # every configured endpoint before giving up
+            try:
+                out[c] = client.call("eth_getCode", [dest, "latest"]) not in ("0x", "0x0", None, "")
+                break
+            except Exception:
+                continue
     return out
+
+
+def reference_tip(a, chain, url):
+    """Recently paid tip from an endpoint OTHER than the one used for the sweep (independent check)."""
+    sess = W._session(a.proxy)
+    for u in W.EVM_CHAINS[chain]["rpcs"]:
+        if u == url:
+            continue
+        try:
+            hist = EvmRpc(sess, u).call("eth_feeHistory", ["0x14", "latest", [75]])
+            rewards = sorted(_int(r[0]) for r in (hist.get("reward") or []) if r)
+            if rewards:
+                return rewards[len(rewards) // 2]
+        except Exception:
+            continue
+    return None
+
+
+def unusual_tip(tip, reference):
+    """True if the tip is far above what an independent endpoint saw recently being paid."""
+    return reference is not None and tip > 3 * reference + 10 ** 9 // 100   # +0.01 gwei slack for ~0 tips
 
 
 def _ask_until_valid(prompt, parse):
@@ -676,6 +703,11 @@ def _sweep_evm_chain(a, chain, accounts, sources, last_dest):
         return last_dest
     if verdict == "warn":
         say(f"  ! {msg}.", 0)
+    if verdict == "confirm":
+        say(f"  ! {msg}.", 0)
+        if _ask("  Type 'yes' if you are sure the destination can receive funds on this chain: ").lower() != "yes":
+            say(f"  Skipping {chain}.", 0)
+            return last_dest
     for acct, d, line in accounts.values():
         try:
             plan = build_evm_sweep(rpc, chain, acct, dest, W.EVM_CHAINS[chain]["tokens"])
@@ -708,9 +740,13 @@ def _sweep_evm_chain(a, chain, accounts, sources, last_dest):
             continue
         max_fees = sum(t["max_cost"] for t in plan["txs"])
         unusual = None
+        ref = reference_tip(a, chain, url)
         if plan["balance"] and max_fees > plan["balance"] * HIGH_FEE_SHARE:
             unusual = (f"fees could reach {W.fmt_amount(max_fees / 1e18)} {sym}, "
                        f"{max_fees / plan['balance']:.0%} of the {sym} balance (actual fees are usually lower)")
+        elif unusual_tip(plan["tip"], ref):
+            unusual = (f"the tip of {plan['tip'] / 1e9:g} gwei is far above the {ref / 1e9:g} gwei an independent "
+                       f"endpoint saw being paid recently (check your endpoint)")
         if not _confirm_broadcast("  Broadcast now?", unusual):
             say("  Not broadcast.", 0)
             continue

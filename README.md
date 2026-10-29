@@ -168,10 +168,10 @@ What happens:
 |---|---|---|
 | What is moved | All confirmed outputs, all address types (legacy incl. uncompressed, nested and native segwit, taproot), one transaction | Configured tokens first, then the native coin minus all fees |
 | Fee target | mempool.space "hour fee" rate (~1 hour), replace-by-fee enabled | EIP-1559: max fee = 2 x base fee + tip, the tip is taken from what recent blocks actually paid (normally minutes) |
-| Safety checks | Every input is verified against its full previous transaction (hash, script, amount), so an endpoint cannot misreport amounts; duplicate outputs are ignored | The endpoint's chain id must match; a failed call aborts instead of counting as zero; the tip is capped at 3x what recent blocks paid; the endpoint never receives a signed transaction before you confirm |
+| Safety checks | Every input is verified against its full previous transaction (hash, script, amount), so an endpoint cannot misreport amounts; duplicate outputs are ignored | The endpoint's chain id must match; a failed call aborts instead of counting as zero; the tip is capped at 3x what recent blocks paid and cross-checked against a second, independent endpoint; the endpoint never receives a signed transaction before you confirm |
 | Skipped and reported | Unconfirmed outputs; outputs worth less than their own fee; results below the dust limit; anything beyond one standard-size transaction (sweep again afterwards) | Tokens when there is no native coin for gas (shows how much is needed); tokens that cannot be transferred (frozen or paused); addresses with pending transactions |
 
-Destination addresses are checked (checksum, mainnet, not one of the swept addresses). An EVM destination that is a smart contract (e.g. a Safe) on some chain but not on the chain being swept is refused, because funds sent there could be lost. A small amount of native coin may remain on EVM addresses as unused fee headroom.
+Destination addresses are checked (checksum, mainnet, not one of the swept addresses). An EVM destination that is a smart contract (e.g. a Safe) on some chain but not on the chain being swept is refused, because funds sent there could be lost. If that can't be checked on every chain, you must type `yes` to continue. A small amount of native coin may remain on EVM addresses as unused fee headroom.
 
 Good to know:
 

@@ -192,8 +192,9 @@ def test_op_stack_l1_fee_call_encoding():
     n = int.from_bytes(data[36:68], "big")
     assert int.from_bytes(data[4:36], "big") == 32 and len(data[4:]) % 32 == 0
     sent = data[68:68 + n]
-    # Same size (so the fee is right) but NEVER the user's broadcastable transaction:
-    assert n == len(real) and sent != real
+    # Same size within a byte or two (r/s lengths vary; the fee has 50% headroom),
+    # but NEVER the user's broadcastable transaction:
+    assert abs(n - len(real)) <= 2 and sent != real
     assert Account.recover_transaction(sent) != acct.address
 
 
@@ -249,7 +250,26 @@ def test_pending_transactions_block_the_sweep(chain):
     ("arbitrum", {"ethereum": True, "arbitrum": False}, "refuse"),   # Safe deployed only on Ethereum
     ("ethereum", {"ethereum": True, "arbitrum": False}, "warn"),
     ("ethereum", {"ethereum": False, "arbitrum": False}, "ok"),
-    ("ethereum", {"ethereum": None, "arbitrum": False}, "warn"),     # could not check
+    ("ethereum", {"ethereum": None, "arbitrum": False}, "confirm"),  # could not check here
+    ("arbitrum", {"ethereum": None, "arbitrum": False}, "confirm"),  # could not check elsewhere
 ])
 def test_contract_destination_rule(chain_name, codes, verdict):
     assert S.contract_destination_check(chain_name, codes)[0] == verdict
+
+
+def test_inconsistent_endpoint_nonce_is_reported_clearly(chain):
+    t, token, fund, _ = chain
+    src, dest = accounts(2)
+    fund(src.address, eth_wei=10 ** 17)
+    with pytest.raises(S.SweepError, match="inconsistent"):
+        S.build_evm_sweep(S.EvmRpc(TesterSession(t, pending_extra=-1), "x"), "ethereum", src, dest.address,
+                          {}, expected_chain_id=t.backend.chain.chain_id)
+
+
+@pytest.mark.parametrize("tip,ref,unusual", [
+    (3 * GWEI, GWEI, False), (4 * GWEI, GWEI, True), (2000 * GWEI, 86 * GWEI, True),
+    (10 ** 6, 0, False),                     # ~0 tips on quiet chains are not flagged
+    (500 * GWEI, None, False),               # no independent reference available
+])
+def test_unusual_tip_against_independent_reference(tip, ref, unusual):
+    assert S.unusual_tip(tip, ref) is unusual
