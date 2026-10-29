@@ -24,4 +24,5 @@ jobs:
       - name: Install
         run: pip install .
       - name: Verify built-in token list on-chain
-        run: walletcheck tokens --verify
+        # A public RPC can be briefly down (UNREACHABLE): retry once after 2 minutes before failing.
+        run: walletcheck tokens --verify || (sleep 120 && walletcheck tokens --verify)

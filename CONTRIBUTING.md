@@ -40,6 +40,10 @@ personal list instead (see "Token lists" in the README). For the built-in list:
    `onchain_symbol`.
 4. Run `walletcheck tokens --verify` (must print 0 FAIL) and `pytest -q`.
 
+A new built-in symbol can clash with a symbol users already have in their personal list for another
+contract; walletcheck then stops and asks them to rename theirs. Mention every added symbol in
+`CHANGELOG.md` so users can see why.
+
 Prefer tokens issued natively on that chain, and say in `name` when a token is bridged rather than
 issued by its original issuer. A pull request that changes `tokens.csv` triggers the on-chain check in
 CI.

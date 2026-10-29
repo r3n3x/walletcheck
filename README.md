@@ -135,7 +135,7 @@ walletcheck scan --chains ethereum base   # only these EVM chains
 | `--chains CHAIN …` | all | Limit the **EVM** chains. Bitcoin, Zcash and Firo are always checked |
 | `--proxy URL` | none | Route lookups through a proxy, e.g. Tor: `socks5h://127.0.0.1:9050` |
 | `--tokens FILE` | `~/.config/walletcheck/tokens.csv` if it exists | Your personal token list (see [Token lists](#token-lists)) |
-| `--no-builtin-tokens` | off | Check only the tokens in your personal list |
+| `--no-builtin-tokens` | off | Check only the tokens in your personal list (which must exist) |
 | `--delay SEC` | 0.3 | Pause between Bitcoin/Zcash/Firo lookups |
 | `--addresses FILE` | `addresses.csv` | Where to save the list of checked addresses |
 | `--out FILE` | `balances.csv` | Where to save the per-address results |
@@ -322,12 +322,12 @@ ethereum,LINK,0x514910771AF9Ca656af840dff83E8264EcF986CA,18,Chainlink
 base,AERO,0x940181a94A35A4569E4529A3CDfB74e38FD98631,18,Aerodrome
 ```
 
-Then check it: `walletcheck tokens --verify`. Each personal token is marked `(personal)`.
+Then check it: `walletcheck tokens --verify`. Each personal token is marked `(personal)`. Save it as plain CSV or Excel's "CSV UTF-8".
 
 | Column | Required | Rule |
 |---|---|---|
 | `chain` | yes | `ethereum`, `arbitrum`, `polygon`, `base`, `optimism`, `bsc` or `avalanche` |
-| `symbol` | yes | Your label in the results, up to 20 characters, no spaces or commas |
+| `symbol` | yes | Your label in the results: 1-20 plain characters (`A-Z a-z 0-9 . _ $ + -`), not the chain's native coin |
 | `address` | yes | The token **contract** address. Checksummed or all lower case; a mixed-case address with a wrong checksum is refused as a likely typo |
 | `decimals` | no | If given, `--verify` checks it. Balances always use the on-chain value |
 | `onchain_symbol` | no | What the contract's `symbol()` returns, if it differs from your label (e.g. `USD₮0`) |
@@ -335,7 +335,7 @@ Then check it: `walletcheck tokens --verify`. Each personal token is marked `(pe
 
 **Rules when the lists meet:**
 - A contract that is already listed is kept once.
-- A symbol already used on the same chain for a **different** contract is refused, so nothing can shadow a real token. Pick another symbol.
+- A symbol already used on the same chain for a **different** contract is refused (case-insensitive), so a personal entry can't masquerade as a listed token. Symbols are plain ASCII, so look-alike letters and invisible characters are refused too. Pick another symbol.
 - Any problem stops walletcheck **before anything goes online**, naming the file and line.
 - `sweep` moves personal tokens too.
 

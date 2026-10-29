@@ -21,7 +21,7 @@ Examples:
   walletcheck scan --in secrets.txt -v   # from a file, verbose
   walletcheck derive --in secrets.txt && walletcheck check
 
-Checks: Bitcoin, 7 EVM chains (native coins + major tokens), Zcash/Firo transparent
+Checks: Bitcoin, 7 EVM chains (native coins + listed tokens), Zcash/Firo transparent
 addresses. Monero: address derived offline only. Sweep: Bitcoin and EVM.
 
 Input formats (one per line in a file, '#' lines ignored):
@@ -41,6 +41,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 
 __version__ = "1.3.0"
 
@@ -143,7 +144,10 @@ class TokenListError(Exception):
 
 def eip55(addr):
     """EIP-55 checksummed form of a 0x-prefixed 40-hex address."""
-    from bip_utils.utils.crypto import Kekkak256
+    try:
+        from bip_utils.utils.crypto import Kekkak256
+    except ImportError:
+        raise TokenListError('missing dependency bip-utils. Run: pip install "bip-utils>=2.9,<3" "requests[socks]"')
     low = addr[2:].lower()
     h = Kekkak256.QuickDigest(low.encode()).hex()
     return "0x" + "".join(c.upper() if c.isalpha() and int(h[i], 16) >= 8 else c for i, c in enumerate(low))
@@ -157,12 +161,16 @@ def personal_token_path():
 
 def parse_token_csv(text, origin, builtin=False):
     """Parse and validate one token list. Comment lines (#) and blank lines are ignored."""
+    text = text.lstrip("\ufeff")                       # byte order mark from Excel's "CSV UTF-8"
     lines = [(n, l) for n, l in enumerate(text.splitlines(), 1) if l.strip() and not l.lstrip().startswith("#")]
     if not lines:
         return []
     header = [h.strip() for h in next(csv.reader([lines[0][1]]))]
     unknown = [h for h in header if h not in TOKEN_COLUMNS]
     missing = REQUIRED_TOKEN_COLUMNS - set(header)
+    dupes = sorted({h for h in header if header.count(h) > 1})
+    if dupes:
+        raise TokenListError(f"{origin} line {lines[0][0]}: column(s) {', '.join(dupes)} appear more than once")
     if unknown or missing:
         raise TokenListError(f"{origin} line {lines[0][0]}: header must use the columns {', '.join(TOKEN_COLUMNS)}"
                              + (f" (unknown: {', '.join(unknown)})" if unknown else "")
@@ -179,8 +187,13 @@ def parse_token_csv(text, origin, builtin=False):
             raise TokenListError(f"{origin} line {n}: {msg}")
         if row["chain"] not in EVM_CHAINS:
             bad(f"unknown chain '{row['chain']}' (valid: {', '.join(EVM_CHAINS)})")
-        if not re.fullmatch(r"[^\s,;]{1,20}", row["symbol"]):
-            bad(f"symbol '{row['symbol']}' must be 1-20 characters without spaces")
+        if not re.fullmatch(r"[A-Za-z0-9._$+-]{1,20}", row["symbol"]):
+            bad(f"symbol {row['symbol']!r} must be 1-20 plain characters: A-Z, a-z, 0-9 and . _ $ + -")
+        if row["symbol"].upper() == EVM_CHAINS[row["chain"]]["symbol"].upper():
+            bad(f"symbol {row['symbol']} is the native coin of {row['chain']}, which is always checked")
+        for col in ("onchain_symbol", "name", "coingecko_id", "source"):
+            if any(unicodedata.category(ch) in ("Cc", "Cf") for ch in row[col]):
+                bad(f"{col} contains invisible or control characters")
         if not RE_EVM_ADDR.match(row["address"]):
             bad(f"address '{row['address']}' is not 0x followed by 40 hex characters")
         checksummed = eip55(row["address"])
@@ -190,7 +203,7 @@ def parse_token_csv(text, origin, builtin=False):
         if int(row["address"], 16) == 0:
             bad("the zero address is not a token")
         row["address"] = checksummed
-        if row["decimals"] and not (row["decimals"].isdigit() and int(row["decimals"]) <= 36):
+        if row["decimals"] and not (re.fullmatch(r"[0-9]{1,2}", row["decimals"]) and int(row["decimals"]) <= 36):
             bad(f"decimals '{row['decimals']}' must be a number from 0 to 36")
         if builtin and not (row["coingecko_id"] or row["source"]):
             bad("built-in tokens need a coingecko_id or a source")
@@ -222,8 +235,12 @@ def load_token_lists(personal=None, use_builtin=True):
                 text = f.read()
         except OSError as e:
             raise TokenListError(f"cannot read token list {path}: {e.strerror}")
+        except UnicodeDecodeError:
+            raise TokenListError(f"token list {path} is not UTF-8 text (save it as CSV UTF-8)")
         entries += parse_token_csv(text, path)
         used = path
+    if not use_builtin and not used:
+        raise TokenListError(f"--no-builtin-tokens needs a personal token list, but {path} does not exist")
     merged, by_addr, by_sym = [], {}, {}
     for e in entries:
         ka, ks = (e["chain"], e["address"].lower()), (e["chain"], e["symbol"].lower())
@@ -1019,7 +1036,6 @@ def _abi_string(h):
 def verify_tokens(sess, entries):
     """On-chain check of each token: contract code exists, symbol() and decimals() match the list.
     Returns [(entry, status, detail)] with status OK / FAIL / UNREACHABLE."""
-    import unicodedata
     norm = lambda x: unicodedata.normalize("NFC", x or "")          # noqa: E731
     out, by_chain = [], {}
     for e in entries:
@@ -1367,4 +1383,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # `python3 walletcheck.py sweep`: walletcheck_sweep does `import walletcheck`, which must be this
+    # module, not a second copy that only knows the built-in token list.
+    sys.modules.setdefault("walletcheck", sys.modules[__name__])
     main()

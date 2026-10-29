@@ -10,8 +10,9 @@
 - **Personal token list:** `~/.config/walletcheck/tokens.csv` (or `$XDG_CONFIG_HOME/walletcheck/`) is
   loaded automatically when it exists and adds to the built-in list. `--tokens FILE` uses another file,
   `--no-builtin-tokens` checks only your own. Rows are validated (chain, EIP-55 checksum, symbol)
-  before anything goes online; a symbol that would shadow another contract on the same chain is
-  refused. `sweep` sweeps personal tokens too.
+  before anything goes online; symbols are plain ASCII, and a symbol that would shadow another
+  contract on the same chain is refused. `sweep` sweeps personal tokens too, also when run as
+  `python3 walletcheck.py sweep`.
 - **New: `walletcheck tokens`** lists the tokens that are checked; `--verify` checks every contract
   on-chain (code present, `symbol()` and `decimals()` as expected). A scheduled CI job re-verifies the
   built-in list on the 1st and 15th of every month.

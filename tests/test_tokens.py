@@ -64,7 +64,13 @@ def test_builtin_tokens_are_what_scans_use():
     ("solana,USDC,0x1111111111111111111111111111111111111111", "unknown chain"),
     ("base,USDC,0x123", "not 0x followed by 40 hex"),
     ("base,USDC,0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02914", "wrong checksum"),
-    ("base,MY TOKEN,0x1111111111111111111111111111111111111111", "without spaces"),
+    ("base,MY TOKEN,0x1111111111111111111111111111111111111111", "plain characters"),
+    ("base,USDC\u200b,0x1111111111111111111111111111111111111111", "plain characters"),  # invisible char
+    ("base,USDС,0x1111111111111111111111111111111111111111", "plain characters"),        # Cyrillic С
+    ("base,X\x1b[2K,0x1111111111111111111111111111111111111111", "plain characters"),   # terminal escape
+    ("bsc,bnb,0x1111111111111111111111111111111111111111", "native coin"),
+    ("base,X,0x1111111111111111111111111111111111111111,6,,Evil\x1b[2K", "control characters"),
+    ("base,X,0x1111111111111111111111111111111111111111,³", "decimals"),
     ("base,X,0x0000000000000000000000000000000000000000", "zero address"),
     ("base,X,0x1111111111111111111111111111111111111111,abc", "decimals"),
     ("base,X,0x1111111111111111111111111111111111111111,6,X,n,id,src,extra", "values for"),
@@ -76,7 +82,8 @@ def test_invalid_rows_are_rejected_with_line_number(row, message):
 
 
 @pytest.mark.parametrize("header,message", [("chain,symbol,adress\n", "unknown: adress"),
-                                            ("chain,symbol\n", "missing: address")])
+                                            ("chain,symbol\n", "missing: address"),
+                                            ("chain,symbol,address,symbol\n", "more than once")])
 def test_bad_header(header, message):
     with pytest.raises(W.TokenListError, match=message):
         W.parse_token_csv(header + "base,X," + TOKEN_A + "\n", "my.csv")
@@ -232,6 +239,7 @@ def test_missing_package_data_explains_the_reinstall(monkeypatch, capsys):
         W.main(["tokens"])
     out = capsys.readouterr().out
     assert e.value.code == 2 and 'pip install -e ".[sweep]"' in out
+    personal_file(f"chain,symbol,address\nbase,FOO,{TOKEN_A}\n")
     W.main(["tokens", "--no-builtin-tokens"])                           # personal-only still works
 
 
@@ -245,3 +253,62 @@ def test_verify_partial_answers_are_unreachable_not_fail(monkeypatch):
     entries = W.parse_token_csv(HEADER + f"base,FOO,{'0x' + 'a' * 40},6,,,,\n", "my.csv")
     monkeypatch.setattr(W, "rpc_batch", lambda sess, rpcs, calls: [None] * len(calls))
     assert W.verify_tokens(None, entries)[0][1] == "UNREACHABLE"
+
+
+def test_excel_bom_and_crlf_are_accepted():
+    personal_file("\ufeffchain,symbol,address\r\nbase,FOO," + TOKEN_A + "\r\n")
+    entries, _ = W.load_token_lists(use_builtin=False)
+    assert [e["symbol"] for e in entries] == ["FOO"]
+
+
+def test_non_utf8_personal_list_is_explained():
+    path = personal_file("")
+    with open(path, "wb") as f:
+        f.write(b"chain,symbol,address,name\nbase,FOO," + TOKEN_A.encode() + b",Caf\xe9\n")
+    with pytest.raises(W.TokenListError, match="not UTF-8"):
+        W.load_token_lists()
+
+
+def test_no_builtin_tokens_without_personal_list_is_an_error(capsys):
+    with pytest.raises(SystemExit) as e:
+        W.main(["tokens", "--no-builtin-tokens"])
+    assert e.value.code == 2 and "needs a personal token list" in capsys.readouterr().out
+
+
+def test_sweep_module_sees_personal_tokens():
+    S = pytest.importorskip("walletcheck_sweep")
+    personal_file(f"chain,symbol,address\nbase,FOO,{TOKEN_A}\n")
+    W.apply_token_lists(W.load_token_lists()[0])
+    assert S.W is W and S.W.EVM_CHAINS["base"]["tokens"]["FOO"] == W.eip55(TOKEN_A)
+
+
+def test_script_mode_shares_one_module(tmp_path):
+    """`python3 walletcheck.py sweep` must not load a second walletcheck module (which would only
+    know the built-in tokens): `import walletcheck` inside the run must return the running script."""
+    import subprocess
+    import sys
+    script = os.path.join(os.path.dirname(W.__file__), "walletcheck.py")
+    code = ("import runpy, sys\n"
+            f"sys.argv = [{script!r}, '--version']\n"
+            "try:\n"
+            f"    runpy.run_path({script!r}, run_name='__main__')\n"
+            "except SystemExit:\n"
+            "    pass\n"
+            "import walletcheck\n"
+            "print(walletcheck.__name__)\n")
+    env = dict(os.environ, XDG_CONFIG_HOME=str(tmp_path), PYTHONPATH=os.path.dirname(script))
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=tmp_path, env=env)
+    assert out.stdout.strip().splitlines()[-1] == "__main__", out.stderr
+
+
+def test_import_without_bip_utils_does_not_crash(tmp_path):
+    import subprocess
+    import sys
+    blocker = tmp_path / "bip_utils"
+    blocker.mkdir()
+    (blocker / "__init__.py").write_text("raise ImportError('blocked for test')\n")
+    code = "import walletcheck as W; print(W.TOKEN_LOAD_ERROR)"
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(tmp_path), os.path.dirname(W.__file__)]),
+               XDG_CONFIG_HOME=str(tmp_path))
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=tmp_path, env=env)
+    assert out.returncode == 0 and "missing dependency bip-utils" in out.stdout, out.stderr
