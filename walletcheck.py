@@ -545,10 +545,21 @@ def rpc_batch(sess, rpcs, calls):
 
 
 def _hexint(v):
+    """Hex string -> int. A failed call (None) stays None; it is never coerced to 0."""
+    if v is None:
+        return None
     try:
         return int(v, 16) if v and v != "0x" else 0
     except (TypeError, ValueError):
         return None
+
+
+def select_chains(names):
+    """Validate --chains names. Unknown names are an error, never silently skipped."""
+    unknown = [c for c in (names or []) if c not in EVM_CHAINS]
+    if unknown:
+        sys.exit(f"Unknown EVM chain(s): {', '.join(unknown)}. Valid: {', '.join(EVM_CHAINS)}")
+    return [c for c in EVM_CHAINS if not names or c in names]
 
 
 def balance_of_data(addr):
@@ -562,7 +573,7 @@ def evm_check_chain(sess, chain, cfg, addrs, results):
     if tokens:
         res = rpc_batch(sess, cfg["rpcs"], [("eth_call", [{"to": c, "data": "0x313ce567"}, "latest"]) for c in tokens.values()])
         for (sym, _), v in zip(tokens.items(), res or [None] * len(tokens)):
-            decimals[sym] = _hexint(v) if v else None
+            decimals[sym] = _hexint(v)
 
     per_addr = 2 + len(tokens)
     chunk = max(1, 40 // per_addr)
@@ -583,22 +594,26 @@ def evm_check_chain(sess, chain, cfg, addrs, results):
             sl = res[j * per_addr:(j + 1) * per_addr]
             native = _hexint(sl[0])
             nonce = _hexint(sl[1])
-            toks = {}
+            toks, tok_failed = {}, False
             for (sym, _), v in zip(tokens.items(), sl[2:]):
                 raw = _hexint(v)
                 dec = decimals.get(sym)
-                if raw and dec is not None:
+                if raw is None or dec is None:
+                    tok_failed = True  # unknown balance, not zero
+                    continue
+                if raw:
                     toks[sym] = raw / 10 ** dec
             entry[chain] = {
-                "native": (native or 0) / 1e18 if native is not None else None,
+                "native": native / 1e18 if native is not None else None,
                 "nonce": nonce,
                 "tokens": toks,
-                "error": native is None,
+                "error": native is None or nonce is None or tok_failed,
             }
         time.sleep(0.2)
 
 
 def cmd_check(a):
+    chains = select_chains(a.chains)  # fail fast on a typo in --chains
     sess = _session(a.proxy)
     with open(a.infile, newline="") as f:
         rows = list(csv.DictReader(f))
@@ -607,7 +622,6 @@ def cmd_check(a):
     if not btc and not evm:
         banner([f"No addresses in {a.infile} - NO balance check performed."])
         sys.exit(1)
-    chains = [c for c in EVM_CHAINS if not a.chains or c in a.chains]
     say(f"Checking {len(btc)} BTC address(es) and {len(evm)} EVM address(es) "
         f"on {len(chains)} EVM chain(s) ...")
     if a.proxy:
@@ -642,6 +656,7 @@ def fmt_amount(v):
 def report(rows, btc_res, evm_res, out_path):
     """rows: dicts with line/source/family/type/path/address. Writes CSV, prints summary."""
     out_rows, hits, errors = [], [], 0
+    unknown_lines = set()  # lines with a failed lookup: unknown, never 'no history'
     for r in rows:
         ad, fam = r["address"], r["family"]
         base = [r["line"], r["source"], fam, r["type"], r["path"], ad]
@@ -649,6 +664,7 @@ def report(rows, btc_res, evm_res, out_path):
             d = btc_res.get(ad)
             if d is None:
                 errors += 1
+                unknown_lines.add(r["line"])
                 out_rows.append(base + ["bitcoin", "", "", "", "LOOKUP FAILED"])
                 say(f"    ? line {r['line']} {r['path']:<28} {ad}  bitcoin LOOKUP FAILED", 2)
                 continue
@@ -661,21 +677,27 @@ def report(rows, btc_res, evm_res, out_path):
                              f"{btc_amt:.8f} BTC", f"{d['txs']} txs", d["sats"] > 0))
         else:
             for chain, d in evm_res.get(ad.lower(), {}).items():
+                sym = EVM_CHAINS[chain]["symbol"]
+                tok = "; ".join(f"{k}={fmt_amount(v)}" for k, v in d.get("tokens", {}).items())
+                native, nonce = d.get("native"), d.get("nonce")
                 if d.get("error"):
                     errors += 1
-                    out_rows.append(base + [chain, "", "", "", "LOOKUP FAILED"])
+                    unknown_lines.add(r["line"])
+                    out_rows.append(base + [chain, "" if native is None else f"{native:.18f}".rstrip("0").rstrip(".") or "0",
+                                            "" if nonce is None else nonce, tok, "LOOKUP FAILED (partial)"])
                     say(f"    ? line {r['line']} {r['path']:<28} {ad}  {chain} LOOKUP FAILED", 2)
-                    continue
-                sym = EVM_CHAINS[chain]["symbol"]
-                tok = "; ".join(f"{k}={fmt_amount(v)}" for k, v in d["tokens"].items())
-                out_rows.append(base + [chain, f"{d['native']:.18f}".rstrip("0").rstrip(".") or "0",
-                                        d["nonce"], tok, ""])
-                if d["native"] or d["nonce"] or d["tokens"]:
-                    bal = f"{fmt_amount(d['native'])} {sym}" + (f" + {tok}" if tok else "")
-                    say(f"    {'*' if d['native'] or d['tokens'] else '-'} line {r['line']} "
-                        f"{r['path']:<28} {ad}  {chain}: {bal}, nonce {d['nonce']}", 2)
-                    hits.append((r["line"], chain, r["type"], r["path"], ad, bal, f"nonce {d['nonce']}",
-                                 bool(d["native"]) or bool(d["tokens"])))
+                    if not (native or d.get("tokens")):
+                        continue  # nothing found: stays UNKNOWN
+                    # a real balance was found despite the failure: still report it
+                else:
+                    out_rows.append(base + [chain, f"{native:.18f}".rstrip("0").rstrip(".") or "0",
+                                            nonce, tok, ""])
+                if native or nonce or d.get("tokens"):
+                    bal = f"{fmt_amount(native or 0)} {sym}" + (f" + {tok}" if tok else "")
+                    say(f"    {'*' if native or d.get('tokens') else '-'} line {r['line']} "
+                        f"{r['path']:<28} {ad}  {chain}: {bal}, nonce {nonce}", 2)
+                    hits.append((r["line"], chain, r["type"], r["path"], ad, bal, f"nonce {nonce}",
+                                 bool(native) or bool(d.get("tokens"))))
 
     with open(out_path, "w", newline="") as f:
         w = csv.writer(f)
@@ -712,9 +734,13 @@ def report(rows, btc_res, evm_res, out_path):
     for line in sorted(used, key=lambda x: int(x)):
         say(f"    line {line} [{src.get(line)}]: {len(used[line])} address/chain combination(s) with history", 0)
 
-    never = sorted({r["line"] for r in rows} - set(used) - {f[0] for f in funded}, key=lambda x: int(x))
+    never = sorted({r["line"] for r in rows} - set(used) - {f[0] for f in funded} - unknown_lines,
+                   key=lambda x: int(x))
     say("\n[3] NO HISTORY AT ALL on the checked addresses", 0)
     say(f"    line(s): {', '.join(never) if never else '-'}", 0)
+    if unknown_lines:
+        say("\n[4] UNKNOWN - a lookup failed, these were NOT fully checked (re-run)", 0)
+        say(f"    line(s): {', '.join(sorted(unknown_lines, key=lambda x: int(x)))}", 0)
 
     say(f"\nFull per-address results: {out_path}   Lookup failures: {errors}", 0)
     if funded:
@@ -779,7 +805,7 @@ class Scanner:
         self.sess = _session(a.proxy)
         self.btc_res, self.evm_res = {}, {}
         self.lookups = 0
-        self.chains = {c: cfg for c, cfg in EVM_CHAINS.items() if not a.chains or c in a.chains}
+        self.chains = {c: EVM_CHAINS[c] for c in select_chains(a.chains)}
 
     def lookup(self, rows):
         btc = [r[5] for r in rows if r[2] == "btc" and r[5] not in self.btc_res]
@@ -798,7 +824,7 @@ class Scanner:
         if fam == "btc":
             d = self.btc_res.get(ad)
             return bool(d and (d["sats"] or d["txs"]))
-        return any(not d.get("error") and (d["native"] or d["nonce"] or d["tokens"])
+        return any(d.get("native") or d.get("nonce") or d.get("tokens")
                    for d in self.evm_res.get(ad.lower(), {}).values())
 
     def failed(self, row):
