@@ -27,7 +27,7 @@ You are tidying up old notes and find a seed phrase, a WIF key or an xpub. Does 
 
 Requires **Python 3.10-3.13**.
 
-> **Python 3.14 note:** the `coincurve` dependency does not ship ready-made packages for 3.14 yet, so installing on 3.14 fails. Use 3.13.
+> **Python 3.14 note:** Python 3.14 is still capped in `pyproject.toml` (`requires-python = ">=3.10,<3.14"`). The reason: the `coincurve` dependency does not publish wheels for 3.14 yet, so installing on 3.14 fails. The cap will be removed once those wheels are published. Use Python 3.10 to 3.13 until then.
 
 **macOS (Homebrew)**
 
@@ -169,7 +169,9 @@ An unused seed costs about 55 lookups instead of several hundred. A used wallet 
 - Not supported: Electrum 2FA seeds (need TrustedCoin's cosigner), multisig wallets, Litecoin and other non-EVM altcoins.
 - **Zcash shielded (`z…`, `u…`) and Firo Spark addresses are not checked.** Seeing their balances needs a viewing key and a light-client scan. A public explorer would receive the viewing key, which breaks the privacy promise, so this tool does not do it.
 - Zcash and Firo lookups show the confirmed balance only. Firo unconfirmed amounts are not included.
-- **Monero is derived but not checked.** Seeing a Monero balance requires scanning the blockchain with the private view key; no website can do that without learning the key, so walletcheck only derives the address offline and shows how to check it in a view-only wallet on your own node. MyMonero-style 13-word seeds are not supported.
+- **Monero is derived but not checked.** Seeing a Monero balance requires scanning the blockchain with the private view key; no website can do that without learning the key, so walletcheck only derives the address offline and shows how to check it in a view-only wallet on your own node.
+- **Monero: only the first (primary) address is derived** (account 0, index 0). Subaddresses and other accounts are not derived, so funds sent to them are not covered by the Monero check.
+- **Monero Polyseed (the newer 16-word format) is not yet supported.** MyMonero-style 13-word seeds are not supported either. Only standard 25-word Monero seeds (and 24 words without the checksum word) are derived.
 - Public RPC endpoints can be rate-limited or change. Failed lookups are reported; re-run to retry.
 
 ## Verification
