@@ -8,6 +8,8 @@ secrets*.txt
 *seed*.txt
 *keys*.txt
 *.csv
+# ...except the built-in token list (public data), the only tracked CSV:
+!walletcheck_tokens/tokens.csv
 
 # Python
 __pycache__/

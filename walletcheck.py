@@ -12,6 +12,7 @@ Commands:
   derive      secrets -> addresses.csv with fixed counts (no network)
   check       addresses.csv -> balances and usage history
   sweep       MOVE found BTC/EVM funds to a new wallet (optional, needs walletcheck[sweep])
+  tokens      list the ERC20 tokens that are checked; --verify checks them on-chain
   selftest    verify the derivation code against published test vectors
 
 Examples:
@@ -20,7 +21,7 @@ Examples:
   walletcheck scan --in secrets.txt -v   # from a file, verbose
   walletcheck derive --in secrets.txt && walletcheck check
 
-Checks: Bitcoin, 7 EVM chains (native coins + major tokens), Zcash/Firo transparent
+Checks: Bitcoin, 7 EVM chains (native coins + listed tokens), Zcash/Firo transparent
 addresses. Monero: address derived offline only. Sweep: Bitcoin and EVM.
 
 Input formats (one per line in a file, '#' lines ignored):
@@ -40,8 +41,9 @@ import os
 import re
 import sys
 import time
+import unicodedata
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # Output verbosity: 0 = quiet (results only), 1 = normal, 2 = verbose (every address)
 VERBOSITY = 1
@@ -61,65 +63,45 @@ def banner(lines):
     print("!" * 72, flush=True)
 
 # --------------------------------------------------------------------------
-# Config: EVM chains, RPC endpoints (tried in order), tokens to check.
-# Add chains/tokens freely. Token decimals are read on-chain.
+# Config: EVM chains and RPC endpoints (tried in order). Tokens come from
+# walletcheck_tokens/tokens.csv (built-in) and the optional personal list
+# ~/.config/walletcheck/tokens.csv - see load_token_lists().
 # --------------------------------------------------------------------------
 EVM_CHAINS = {
     "ethereum": {
         "symbol": "ETH",
         "rpcs": ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org", "https://eth.llamarpc.com"],
-        "tokens": {
-            "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-            "USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-            "DAI": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-            "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            "WBTC": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
-        },
+        "tokens": {},           # filled from the token lists (see load_token_lists)
     },
     "arbitrum": {
         "symbol": "ETH",
         "rpcs": ["https://arbitrum-one-rpc.publicnode.com", "https://arb1.arbitrum.io/rpc", "https://arbitrum.drpc.org"],
-        "tokens": {
-            "USDC": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-            "USDC.e": "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8",
-            "USDT": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
-            "ARB": "0x912CE59144191C1204E64559FE8253a0e49E6548",
-        },
+        "tokens": {},           # filled from the token lists (see load_token_lists)
     },
     "polygon": {
         "symbol": "POL",
         "rpcs": ["https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"],
-        "tokens": {
-            "USDC": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-            "USDC.e": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
-            "USDT": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
-        },
+        "tokens": {},           # filled from the token lists (see load_token_lists)
     },
     "base": {
         "symbol": "ETH",
         "rpcs": ["https://base-rpc.publicnode.com", "https://mainnet.base.org", "https://base.drpc.org"],
-        "tokens": {"USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"},
+        "tokens": {},           # filled from the token lists (see load_token_lists)
     },
     "optimism": {
         "symbol": "ETH",
         "rpcs": ["https://optimism-rpc.publicnode.com", "https://mainnet.optimism.io", "https://optimism.drpc.org"],
-        "tokens": {
-            "USDC": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
-            "OP": "0x4200000000000000000000000000000000000042",
-        },
+        "tokens": {},           # filled from the token lists (see load_token_lists)
     },
     "bsc": {
         "symbol": "BNB",
         "rpcs": ["https://bsc-rpc.publicnode.com", "https://bsc-dataseed.binance.org", "https://bsc.drpc.org"],
-        "tokens": {
-            "USDT": "0x55d398326f99059fF775485246999027B3197955",
-            "USDC": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
-        },
+        "tokens": {},           # filled from the token lists (see load_token_lists)
     },
     "avalanche": {
         "symbol": "AVAX",
         "rpcs": ["https://avalanche-c-chain-rpc.publicnode.com", "https://api.avax.network/ext/bc/C/rpc", "https://avalanche.drpc.org"],
-        "tokens": {},
+        "tokens": {},           # filled from the token lists (see load_token_lists)
     },
 }
 
@@ -145,6 +127,148 @@ RE_BTC_LEGACY = re.compile(r"^[13][" + B58 + r"]{25,34}$")
 RE_BTC_BECH32 = re.compile(r"^bc1[ac-hj-np-z02-9]{11,87}$")
 RE_HEX64 = re.compile(r"^(0x)?[0-9a-fA-F]{64}$")
 RE_WIF = re.compile(r"^[5KL][" + B58 + r"]{50,51}$")
+
+
+# ==========================================================================
+# TOKEN LISTS (built-in CSV + optional personal CSV)
+# ==========================================================================
+TOKEN_COLUMNS = ["chain", "symbol", "address", "decimals", "onchain_symbol", "name", "coingecko_id", "source"]
+REQUIRED_TOKEN_COLUMNS = {"chain", "symbol", "address"}
+TOKEN_ENTRIES = []          # list of dicts, in load order; also used by `walletcheck tokens`
+TOKEN_LOAD_ERROR = None     # set if the built-in list could not be loaded at import time
+
+
+class TokenListError(Exception):
+    """A token list is missing, malformed or conflicting. The message names file and line."""
+
+
+def eip55(addr):
+    """EIP-55 checksummed form of a 0x-prefixed 40-hex address."""
+    try:
+        from bip_utils.utils.crypto import Kekkak256
+    except ImportError:
+        raise TokenListError('missing dependency bip-utils. Run: pip install "bip-utils>=2.9,<3" "requests[socks]"')
+    low = addr[2:].lower()
+    h = Kekkak256.QuickDigest(low.encode()).hex()
+    return "0x" + "".join(c.upper() if c.isalpha() and int(h[i], 16) >= 8 else c for i, c in enumerate(low))
+
+
+def personal_token_path():
+    """~/.config/walletcheck/tokens.csv, or $XDG_CONFIG_HOME/walletcheck/tokens.csv if set."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "walletcheck", "tokens.csv")
+
+
+def parse_token_csv(text, origin, builtin=False):
+    """Parse and validate one token list. Comment lines (#) and blank lines are ignored."""
+    text = text.lstrip("\ufeff")                       # byte order mark from Excel's "CSV UTF-8"
+    lines = [(n, l) for n, l in enumerate(text.splitlines(), 1) if l.strip() and not l.lstrip().startswith("#")]
+    if not lines:
+        return []
+    header = [h.strip() for h in next(csv.reader([lines[0][1]]))]
+    unknown = [h for h in header if h not in TOKEN_COLUMNS]
+    missing = REQUIRED_TOKEN_COLUMNS - set(header)
+    dupes = sorted({h for h in header if header.count(h) > 1})
+    if dupes:
+        raise TokenListError(f"{origin} line {lines[0][0]}: column(s) {', '.join(dupes)} appear more than once")
+    if unknown or missing:
+        raise TokenListError(f"{origin} line {lines[0][0]}: header must use the columns {', '.join(TOKEN_COLUMNS)}"
+                             + (f" (unknown: {', '.join(unknown)})" if unknown else "")
+                             + (f" (missing: {', '.join(sorted(missing))})" if missing else ""))
+    out = []
+    for n, line in lines[1:]:
+        values = next(csv.reader([line]))
+        if len(values) > len(header):
+            raise TokenListError(f"{origin} line {n}: {len(values)} values for {len(header)} columns")
+        row = {c: "" for c in TOKEN_COLUMNS}
+        row.update({h: v.strip() for h, v in zip(header, values)})
+
+        def bad(msg):
+            raise TokenListError(f"{origin} line {n}: {msg}")
+        if row["chain"] not in EVM_CHAINS:
+            bad(f"unknown chain '{row['chain']}' (valid: {', '.join(EVM_CHAINS)})")
+        if not re.fullmatch(r"[A-Za-z0-9._$+-]{1,20}", row["symbol"]):
+            bad(f"symbol {row['symbol']!r} must be 1-20 plain characters: A-Z, a-z, 0-9 and . _ $ + -")
+        if row["symbol"].upper() == EVM_CHAINS[row["chain"]]["symbol"].upper():
+            bad(f"symbol {row['symbol']} is the native coin of {row['chain']}, which is always checked")
+        for col in ("onchain_symbol", "name", "coingecko_id", "source"):
+            if any(unicodedata.category(ch) in ("Cc", "Cf") for ch in row[col]):
+                bad(f"{col} contains invisible or control characters")
+        if not RE_EVM_ADDR.match(row["address"]):
+            bad(f"address '{row['address']}' is not 0x followed by 40 hex characters")
+        checksummed = eip55(row["address"])
+        mixed = row["address"][2:] not in (row["address"][2:].lower(), row["address"][2:].upper())
+        if mixed and row["address"] != checksummed:
+            bad(f"address '{row['address']}' has a wrong checksum (upper/lower case) - probably a typo")
+        if int(row["address"], 16) == 0:
+            bad("the zero address is not a token")
+        row["address"] = checksummed
+        if row["decimals"] and not (re.fullmatch(r"[0-9]{1,2}", row["decimals"]) and int(row["decimals"]) <= 36):
+            bad(f"decimals '{row['decimals']}' must be a number from 0 to 36")
+        if builtin and not (row["coingecko_id"] or row["source"]):
+            bad("built-in tokens need a coingecko_id or a source")
+        row["origin"], row["line"] = origin, n
+        out.append(row)
+    return out
+
+
+def _read_builtin_tokens():
+    try:
+        from importlib import resources
+        text = resources.files("walletcheck_tokens").joinpath("tokens.csv").read_text(encoding="utf-8")
+    except Exception:
+        raise TokenListError("the built-in token list (walletcheck_tokens/tokens.csv) is missing. If you installed "
+                             "with `pip install -e`, run it again after updating: pip install -e \".[sweep]\"")
+    return parse_token_csv(text, "built-in token list", builtin=True)
+
+
+def load_token_lists(personal=None, use_builtin=True):
+    """Merge the built-in list and the personal list (default path if it exists, or `personal`).
+    Same chain + address twice: kept once. Same chain + symbol for different contracts: error.
+    Returns (entries, personal_path_used or None)."""
+    entries = _read_builtin_tokens() if use_builtin else []
+    path = personal or personal_token_path()
+    used = None
+    if personal or os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            raise TokenListError(f"cannot read token list {path}: {e.strerror}")
+        except UnicodeDecodeError:
+            raise TokenListError(f"token list {path} is not UTF-8 text (save it as CSV UTF-8)")
+        entries += parse_token_csv(text, path)
+        used = path
+    if not use_builtin and not used:
+        raise TokenListError(f"--no-builtin-tokens needs a personal token list, but {path} does not exist")
+    merged, by_addr, by_sym = [], {}, {}
+    for e in entries:
+        ka, ks = (e["chain"], e["address"].lower()), (e["chain"], e["symbol"].lower())
+        if ka in by_addr:
+            continue                                   # the same contract listed twice
+        if ks in by_sym:
+            o = by_sym[ks]
+            raise TokenListError(f"{e['origin']} line {e['line']}: symbol {e['symbol']} on {e['chain']} is already "
+                                 f"used for another contract ({o['origin']} line {o['line']}). Use a different symbol.")
+        by_addr[ka], by_sym[ks] = e, e
+        merged.append(e)
+    return merged, used
+
+
+def apply_token_lists(entries):
+    """Make the loaded tokens the ones checked (and swept) on each EVM chain."""
+    global TOKEN_ENTRIES
+    for cfg in EVM_CHAINS.values():
+        cfg["tokens"] = {}
+    for e in entries:
+        EVM_CHAINS[e["chain"]]["tokens"][e["symbol"]] = e["address"]
+    TOKEN_ENTRIES = list(entries)
+
+
+try:                                                   # built-in list at import time (library use, tests)
+    apply_token_lists(_read_builtin_tokens())
+except TokenListError as _e:
+    TOKEN_LOAD_ERROR = str(_e)
 
 
 # ==========================================================================
@@ -897,6 +1021,85 @@ def report(rows, btc_res, evm_res, out_path, utxo_res=None):
 
 
 # ==========================================================================
+# TOKENS - list and verify the token lists
+# ==========================================================================
+def _abi_string(h):
+    """Decode an ABI string return value (or a bytes32 one, used by some old tokens)."""
+    b = bytes.fromhex(h[2:]) if isinstance(h, str) and len(h) > 2 else b""
+    if len(b) >= 64:
+        off = int.from_bytes(b[:32], "big")
+        n = int.from_bytes(b[off:off + 32], "big")
+        return b[off + 32:off + 32 + n].decode("utf-8", "replace")
+    return b.rstrip(b"\0").decode("utf-8", "replace")
+
+
+def verify_tokens(sess, entries):
+    """On-chain check of each token: contract code exists, symbol() and decimals() match the list.
+    Returns [(entry, status, detail)] with status OK / FAIL / UNREACHABLE."""
+    norm = lambda x: unicodedata.normalize("NFC", x or "")          # noqa: E731
+    out, by_chain = [], {}
+    for e in entries:
+        by_chain.setdefault(e["chain"], []).append(e)
+    for chain, toks in by_chain.items():
+        calls = []
+        for e in toks:
+            calls += [("eth_getCode", [e["address"], "latest"]),
+                      ("eth_call", [{"to": e["address"], "data": "0x95d89b41"}, "latest"]),   # symbol()
+                      ("eth_call", [{"to": e["address"], "data": "0x313ce567"}, "latest"])]   # decimals()
+        res = rpc_batch(sess, EVM_CHAINS[chain]["rpcs"], calls)
+        for i, e in enumerate(toks):
+            if res is None or res[3 * i] is None:
+                out.append((e, "UNREACHABLE", f"no {chain} endpoint answered - retry later"))
+                continue
+            code, sym_raw, dec_raw = res[3 * i:3 * i + 3]
+            if code in ("0x", "0x0", ""):
+                out.append((e, "FAIL", f"no contract at this address on {chain}"))
+                continue
+            sym, dec = _abi_string(sym_raw), _hexint(dec_raw) if dec_raw is not None else None
+            expected = e["onchain_symbol"] or e["symbol"]
+            if dec is None:
+                out.append((e, "FAIL", "decimals() failed - not an ERC20 token?"))
+            elif norm(sym) != norm(expected):
+                out.append((e, "FAIL", f"contract says symbol {sym!r}, list expects {expected!r}"
+                                       + ("" if e["onchain_symbol"] else " (set onchain_symbol if the display name differs on purpose)")))
+            elif e["decimals"] and int(e["decimals"]) != dec:
+                out.append((e, "FAIL", f"contract has {dec} decimals, list says {e['decimals']}"))
+            else:
+                out.append((e, "OK", f"symbol {sym!r}, {dec} decimals"))
+    return out
+
+
+def cmd_tokens(a):
+    entries = [e for e in TOKEN_ENTRIES if not a.chains or e["chain"] in a.chains]
+    personal = personal_token_path() if not a.tokens else a.tokens
+    say(f"Built-in list: {sum(e['origin'] == 'built-in token list' for e in TOKEN_ENTRIES)} tokens"
+        + ("" if not a.no_builtin_tokens else " (disabled with --no-builtin-tokens)"), 0)
+    if any(e["origin"] != "built-in token list" for e in TOKEN_ENTRIES):
+        say(f"Personal list:  {sum(e['origin'] != 'built-in token list' for e in TOKEN_ENTRIES)} tokens from {personal}", 0)
+    else:
+        say(f"Personal list:  none (create {personal} to add your own tokens)", 0)
+    if not a.verify:
+        for chain in EVM_CHAINS:
+            toks = [e for e in entries if e["chain"] == chain]
+            if toks:
+                say(f"\n{chain}", 0)
+                for e in toks:
+                    tag = "" if e["origin"] == "built-in token list" else "  (personal)"
+                    say(f"  {e['symbol']:<8} {e['address']}  {e['name']}{tag}", 0)
+        return
+    say(f"\nVerifying {len(entries)} token(s) on-chain (contract code, symbol(), decimals()) ...", 0)
+    results = verify_tokens(_session(a.proxy), entries)
+    for e, status, detail in results:
+        tag = "" if e["origin"] == "built-in token list" else " (personal)"
+        say(f"  {status:<11} {e['chain']:<9} {e['symbol']:<8} {e['address']}  {detail}{tag}", 0)
+    bad = [r for r in results if r[1] != "OK"]
+    say(f"\n{len(results) - len(bad)} OK, {sum(r[1] == 'FAIL' for r in bad)} FAIL, "
+        f"{sum(r[1] == 'UNREACHABLE' for r in bad)} UNREACHABLE", 0)
+    if bad:
+        sys.exit(1)
+
+
+# ==========================================================================
 # SELFTEST - published BIP test vectors ("abandon ... about" seed)
 # ==========================================================================
 def cmd_selftest(_a):
@@ -1099,6 +1302,13 @@ def main(argv=None):
         x.add_argument("--delay", type=float, default=0.3, help="seconds between BTC/Zcash/Firo lookups (default 0.3)")
         x.add_argument("--chains", nargs="*", metavar="CHAIN",
                       help=f"limit the EVM chains (default all): {' '.join(EVM_CHAINS)}")
+        token_opts(x)
+
+    def token_opts(x):
+        x.add_argument("--tokens", metavar="FILE",
+                       help=f"personal token list (default: {personal_token_path()} if it exists)")
+        x.add_argument("--no-builtin-tokens", action="store_true",
+                       help="check only the tokens in your personal list")
 
     s = sub.add_parser("scan", parents=[common], help="derive + check in one run, adaptive (recommended)")
     s.add_argument("--in", dest="infile", help="secrets file (omit for a hidden prompt)")
@@ -1139,17 +1349,41 @@ def main(argv=None):
     check_opts(w)
     w.set_defaults(fn=lambda args: __import__("walletcheck_sweep").cmd_sweep(args))
 
+    k = sub.add_parser("tokens", parents=[common], help="list the ERC20 tokens that are checked; --verify on-chain")
+    k.add_argument("--verify", action="store_true", help="check each token on-chain (contract, symbol, decimals)")
+    k.add_argument("--chains", nargs="*", metavar="CHAIN", help="limit to these EVM chains")
+    k.add_argument("--proxy", help="route lookups through a proxy, e.g. socks5h://127.0.0.1:9050 (Tor)")
+    token_opts(k)
+    k.set_defaults(fn=cmd_tokens)
+
     t = sub.add_parser("selftest", parents=[common], help="verify derivation against published test vectors")
     t.set_defaults(fn=cmd_selftest)
 
     a = p.parse_args(argv)
     VERBOSITY = 2 if a.verbose else 0 if a.quiet else 1
+    if hasattr(a, "tokens"):                       # scan, check, sweep, tokens
+        if getattr(a, "chains", None):
+            select_chains(a.chains)
+        try:
+            entries, used = load_token_lists(personal=a.tokens, use_builtin=not a.no_builtin_tokens)
+        except TokenListError as e:
+            banner([f"Token list problem: {e}"])
+            sys.exit(2)
+        apply_token_lists(entries)
+        if used and a.cmd != "tokens":
+            say(f"Personal token list: {used} ({sum(e['origin'] == used for e in entries)} token(s))")
     try:
         a.fn(a)
     except KeyboardInterrupt:
         print("\nAborted by user.", file=sys.stderr)
         sys.exit(130)
+    except BrokenPipeError:                        # e.g. `walletcheck tokens | head`: exit quietly
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(1)
 
 
 if __name__ == "__main__":
+    # `python3 walletcheck.py sweep`: walletcheck_sweep does `import walletcheck`, which must be this
+    # module, not a second copy that only knows the built-in token list.
+    sys.modules.setdefault("walletcheck", sys.modules[__name__])
     main()

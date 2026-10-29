@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.3.0 - 2026-10-29
+
+- **Token lists in two layers.** The built-in list moved from the code into
+  `walletcheck_tokens/tokens.csv` and grew from 17 to 34 tokens: USDS, PYUSD and USDe on Ethereum;
+  MOR (Morpheus) on Ethereum, Arbitrum and Base; DAI on Arbitrum, Base and Optimism; USDT on Base and
+  Optimism (bridged) plus USDT0 on Optimism; USDC, USDT, USDC.e and USDT.e on Avalanche. Every
+  contract was cross-checked against CoinGecko and verified on-chain.
+- **Personal token list:** `~/.config/walletcheck/tokens.csv` (or `$XDG_CONFIG_HOME/walletcheck/`) is
+  loaded automatically when it exists and adds to the built-in list. `--tokens FILE` uses another file,
+  `--no-builtin-tokens` checks only your own. Rows are validated (chain, EIP-55 checksum, symbol)
+  before anything goes online; symbols are plain ASCII, and a symbol that would shadow another
+  contract on the same chain is refused. `sweep` sweeps personal tokens too, also when run as
+  `python3 walletcheck.py sweep`.
+- **New: `walletcheck tokens`** lists the tokens that are checked; `--verify` checks every contract
+  on-chain (code present, `symbol()` and `decimals()` as expected). A scheduled CI job re-verifies the
+  built-in list on the 1st and 15th of every month.
+- Tokens are still only checked from an allowlist matched by contract address, so spam and look-alike
+  tokens never show up as balances.
+- **Editable installs (`pip install -e`) must be re-run once after updating**, because the token list
+  is a new data package.
+
 ## 1.2.0 - 2026-10-29
 
 - **New: `walletcheck sweep`** (optional, `pip install "walletcheck[sweep]"`) moves found funds to a new
