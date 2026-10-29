@@ -17,6 +17,8 @@ Thanks for helping! Bug reports, new chains/tokens, wallet path schemes and docu
 
 ## Development setup
 
+To just *use* walletcheck, follow [Install](README.md#install) in the README instead. For development:
+
 ```bash
 git clone https://github.com/r3n3x/walletcheck.git
 cd walletcheck

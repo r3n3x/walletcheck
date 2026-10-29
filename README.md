@@ -62,13 +62,32 @@ Requires **Python 3.10-3.13**.
 
 **macOS (Homebrew)**
 
+Install Python 3.13 once (the `python3` that comes with macOS is 3.9, too old):
+
 ```bash
 brew install python@3.13
-python3.13 -m venv ~/walletcheck-venv
-source ~/walletcheck-venv/bin/activate
-pip install "walletcheck[sweep] @ git+https://github.com/r3n3x/walletcheck.git"
-walletcheck selftest          # should end with SELFTEST PASSED
 ```
+
+Then choose one of two ways. Both put walletcheck into its own virtual environment (venv) at `~/walletcheck-venv`, so nothing touches your system Python.
+
+*Option A: straight from GitHub (quickest)*
+
+```bash
+python3.13 -m venv ~/walletcheck-venv
+~/walletcheck-venv/bin/pip install "walletcheck[sweep] @ git+https://github.com/r3n3x/walletcheck.git"
+~/walletcheck-venv/bin/walletcheck selftest       # should end with SELFTEST PASSED
+```
+
+*Option B: from a local copy of the code (read it before you run it)*
+
+```bash
+git clone https://github.com/r3n3x/walletcheck.git ~/walletcheck
+python3.13 -m venv ~/walletcheck-venv
+~/walletcheck-venv/bin/pip install -e "$HOME/walletcheck[sweep]"
+~/walletcheck-venv/bin/walletcheck selftest       # should end with SELFTEST PASSED
+```
+
+`-e` (editable) runs the code straight from `~/walletcheck`, so what you read is exactly what runs.
 
 Leave out `[sweep]` if you only want to check balances. `[sweep]` adds the two signing libraries that `walletcheck sweep` needs: embit and eth-account.
 
@@ -76,23 +95,31 @@ Leave out `[sweep]` if you only want to check balances. `[sweep]` adds the two s
 
 **Windows:** should work the same way (`py -3.13 -m venv ...`), but is untested. Feedback welcome.
 
-**Use it without activating the venv:** add an alias, e.g. to `~/.zshrc`:
+**Run it as plain `walletcheck`:** add an alias to `~/.zshrc` (the default shell on macOS), then open a new terminal window:
 
 ```bash
-alias walletcheck="$HOME/walletcheck-venv/bin/walletcheck"
+echo 'alias walletcheck="$HOME/walletcheck-venv/bin/walletcheck"' >> ~/.zshrc
 ```
+
+Alternatively, `source ~/walletcheck-venv/bin/activate` makes `walletcheck` and `pip` available until you close the window (`deactivate` to leave). The commands in this README use full paths, so they work either way.
 
 **Update to the latest version:**
 
 ```bash
+# Option A (installed from GitHub):
 ~/walletcheck-venv/bin/pip install --upgrade "walletcheck[sweep] @ git+https://github.com/r3n3x/walletcheck.git"
-# or, if you cloned the repository and installed it with `pip install -e`:
-cd walletcheck && git pull && pip install -e ".[sweep]"
+
+# Option B (local copy):
+cd ~/walletcheck && git checkout main && git pull
+~/walletcheck-venv/bin/pip install -e ".[sweep]"
 ```
 
-If pip answers "already satisfied" without updating, add `--force-reinstall`. Then run `walletcheck --version` and `walletcheck selftest`.
+Then check: `walletcheck --version` (compare with "Current version" at the top of this page) and `walletcheck selftest`.
 
-> **Updating a cloned install to 1.3.0 or later:** re-run `pip install -e ".[sweep]"` after `git pull`. The token list is a data package that an older editable install doesn't know about; without it, walletcheck stops with "the built-in token list ... is missing".
+- **Option A says "already satisfied" without updating:** add `--force-reinstall`.
+- **Option B: always re-run the `pip install -e` line after `git pull`.** New versions can add files or dependencies that an older editable install doesn't know about (1.3.0 added the token list; without the re-run, walletcheck stops with "the built-in token list ... is missing").
+- **`git pull` refuses because of local changes:** you edited a file in `~/walletcheck`. `git stash` sets your edits aside (`git stash pop` brings them back), or delete the folder and clone again. Your personal token list lives in `~/.config/walletcheck/` and is not affected.
+- **`pip: command not found` or "externally-managed-environment":** you ran a `pip` outside the venv. Use the full path `~/walletcheck-venv/bin/pip` as shown.
 
 ## Quick start
 
