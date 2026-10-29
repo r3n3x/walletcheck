@@ -3,6 +3,16 @@
 
 ## Unreleased - 1.1.0
 
+- **New: `walletcheck sweep`** (optional, `pip install "walletcheck[sweep]"`) moves found funds to a new
+  wallet. Bitcoin: all address types in one transaction, inputs verified against their previous
+  transactions, ~1 hour fee (mempool.space hour fee), replace-by-fee. EVM: configured tokens first, then
+  the native coin minus all fees; EIP-1559 tip based on what recent blocks paid; Base/Optimism L1 data
+  fee included; endpoint chain id verified. Per chain: destination and endpoint prompts, signed plan,
+  one y/N; `--dry-run` never broadcasts. Zcash/Firo/Monero and watch-only inputs are not swept. Hardened after an
+  independent review: endpoints never see a transaction signed by the user's key before confirmation; tip
+  capped at 3x recently paid tips; unusual fees need a typed `yes`; frozen tokens no longer block the
+  native sweep; pending transactions, duplicate outputs, oversized transactions, malformed destinations
+  and contract wallets missing on the target chain are handled.
 - Zcash (transparent `t1...`, BIP44 coin 133) and Firo (transparent `a...`, BIP44 coin 136) are derived from seeds, xprv master keys, WIF keys, hex keys and compressed public keys. Balances and history are checked via Blockchair (Zcash) and the Firo Insight explorer.
 - Shielded Zcash and Firo Spark addresses are not checked (they need viewing keys).
 - Monero: a 25-word Monero seed (or 24 words without the checksum word) is detected and the

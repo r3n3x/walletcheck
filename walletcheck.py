@@ -11,6 +11,7 @@ Commands:
   scan        derive + check in one go, adaptive (recommended)
   derive      secrets -> addresses.csv with fixed counts (no network)
   check       addresses.csv -> balances and usage history
+  sweep       MOVE found BTC/EVM funds to a new wallet (optional, needs walletcheck[sweep])
   selftest    verify the derivation code against published test vectors
 
 Examples:
@@ -1009,22 +1010,9 @@ class Scanner:
         return rows, i, last, fails
 
 
-def cmd_scan(a):
-    b = _bip()
-    t0 = time.time()
-    say("Step 1/3 - Reading inputs (secrets stay on this computer)")
-    seqs, n, rejected = parse_inputs(b, read_lines(a), a)
-    if not seqs:
-        rejected_banner(rejected)
-        banner(["Nothing valid to check - stopped. NO balance check was performed."])
-        sys.exit(1)
-
-    say(f"\nStep 2/3 - Checking public addresses online (adaptive: first {a.initial} BTC / "
-        f"{a.eth_initial} EVM per chain,")
-    say(f"           continuing while a used address is within {a.gap} of the end; "
-        f"change/next account only if used)")
-    if a.proxy:
-        say(f"           via proxy {a.proxy}")
+def scan_seqs(a, seqs):
+    """Adaptive walk over all address sequences. Returns (rows, scanner, lookup_failures).
+    Shared by `scan` and `sweep`."""
     sc = Scanner(a)
     all_rows, queue, total_fail = [], list(seqs), 0
     while queue:
@@ -1045,6 +1033,27 @@ def cmd_scan(a):
         if s.used:
             # change chain only matters if receive was used; next account only if this one was
             queue[0:0] = s.followups + (s.next_account() if s.next_account else [])
+
+    return all_rows, sc, total_fail
+
+
+def cmd_scan(a):
+    b = _bip()
+    t0 = time.time()
+    say("Step 1/3 - Reading inputs (secrets stay on this computer)")
+    seqs, n, rejected = parse_inputs(b, read_lines(a), a)
+    if not seqs:
+        rejected_banner(rejected)
+        banner(["Nothing valid to check - stopped. NO balance check was performed."])
+        sys.exit(1)
+
+    say(f"\nStep 2/3 - Checking public addresses online (adaptive: first {a.initial} BTC / "
+        f"{a.eth_initial} EVM per chain,")
+    say(f"           continuing while a used address is within {a.gap} of the end; "
+        f"change/next account only if used)")
+    if a.proxy:
+        say(f"           via proxy {a.proxy}")
+    all_rows, sc, total_fail = scan_seqs(a, seqs)
 
     with open(a.addresses, "w", newline="") as f:
         w = csv.writer(f)
@@ -1110,6 +1119,18 @@ def main(argv=None):
     c.add_argument("--out", default="balances.csv")
     check_opts(c)
     c.set_defaults(fn=cmd_check)
+
+    w = sub.add_parser("sweep", parents=[common],
+                       help="MOVE found funds to a new wallet (BTC + EVM); needs walletcheck[sweep]")
+    w.add_argument("--in", dest="infile", help="secrets file (omit for a hidden prompt)")
+    w.add_argument("--dry-run", action="store_true", help="build and sign, show the plan, never broadcast")
+    w.add_argument("--wait", type=int, default=600, help="seconds to wait for EVM confirmations (default 600)")
+    w.add_argument("--initial", type=int, default=10, help="BTC addresses always checked per chain (default 10)")
+    w.add_argument("--eth-initial", type=int, default=5, help="EVM addresses always checked per scheme (default 5)")
+    w.add_argument("--gap", type=int, default=3, help="unused addresses after the last used one (default 3)")
+    w.add_argument("--max-index", type=int, default=1000, help="hard cap per chain (default 1000)")
+    check_opts(w)
+    w.set_defaults(fn=lambda args: __import__("walletcheck_sweep").cmd_sweep(args))
 
     t = sub.add_parser("selftest", parents=[common], help="verify derivation against published test vectors")
     t.set_defaults(fn=cmd_selftest)

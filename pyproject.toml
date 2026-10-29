@@ -25,11 +25,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only needed for `walletcheck sweep` (signing transactions)
+sweep = [
+    "embit>=0.8",
+    "eth-account>=0.10",
+]
 test = [
     "pytest>=7",
     "embit>=0.8",
     "eth-account>=0.10",
     "monero>=1.1",
+    "bitcoin-utils>=0.7",
+    "eth-tester[py-evm]>=0.12.0b1",
 ]
 
 [project.scripts]
@@ -40,7 +47,7 @@ Homepage = "https://github.com/r3n3x/walletcheck"
 Issues = "https://github.com/r3n3x/walletcheck/issues"
 
 [tool.setuptools]
-py-modules = ["walletcheck"]
+py-modules = ["walletcheck", "walletcheck_sweep"]
 
 [tool.setuptools.dynamic]
 version = { attr = "walletcheck.__version__" }
