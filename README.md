@@ -109,6 +109,17 @@ RESULTS
     line(s): -
 ```
 
+The result sections mean:
+
+| Section | Meaning |
+|---|---|
+| `[1] BALANCES FOUND` | Funds on a checked address, chain or token. Move them to a fresh wallet. |
+| `[2] USED BEFORE, NOW EMPTY` | Transactions exist but nothing is left. |
+| `[3] NO HISTORY AT ALL` | Lookups succeeded and the address has never been used. |
+| `[4] UNKNOWN` | A lookup failed, so these lines were **not** fully checked. Re-run them. |
+
+If a lookup fails, the run ends with a warning box. Failed lookups are never shown as empty.
+
 Results are also saved as CSV: `addresses.csv` (every address checked) and `balances.csv` (per address and chain). Both contain public data only.
 
 ## How the adaptive scan works

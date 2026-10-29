@@ -7,7 +7,7 @@ name = "walletcheck"
 dynamic = ["version"]
 description = "Check whether old seed phrases, keys or xpubs still hold funds - secrets never leave your computer."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "Unlicense"
 license-files = ["LICENSE"]
 keywords = ["bitcoin", "ethereum", "bip39", "electrum", "xpub", "wallet", "recovery", "balance"]
